@@ -95,7 +95,7 @@
    "fieldname": "assignment_attachment",
    "fieldtype": "Attach",
    "label": "Assignment Attachment",
-   "mandatory_depends_on": "eval:doc.type != \"URL\";"
+   "mandatory_depends_on": "eval:!([\"URL\", \"Text\"]).includes(doc.type);"
   },
   {
    "fetch_from": "assignment.type",

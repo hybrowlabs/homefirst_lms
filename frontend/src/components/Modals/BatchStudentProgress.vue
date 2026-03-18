@@ -7,27 +7,39 @@
 	>
 		<template #body>
 			<div class="p-5 space-y-10 text-base">
-				<div class="flex items-center space-x-2">
-					<Avatar :image="student.user_image" size="3xl" />
-					<div class="space-y-1">
-						<div class="flex items-center space-x-2">
-							<div class="text-xl font-semibold text-ink-gray-9">
-								{{ student.full_name }}
+				<div class="flex items-center justify-between">
+					<div class="flex items-center space-x-2">
+						<Avatar :image="student.user_image" size="3xl" />
+						<div class="space-y-1">
+							<div class="flex items-center space-x-2">
+								<div class="text-xl font-semibold text-ink-gray-9">
+									{{ student.full_name }}
+								</div>
+								<Badge
+									v-if="
+										Object.keys(student.assessments).length ||
+										Object.keys(student.courses).length
+									"
+									:theme="student.progress === 100 ? 'green' : 'red'"
+								>
+									{{ student.progress }}% {{ __('Complete') }}
+								</Badge>
 							</div>
-							<Badge
-								v-if="
-									Object.keys(student.assessments).length ||
-									Object.keys(student.courses).length
-								"
-								:theme="student.progress === 100 ? 'green' : 'red'"
-							>
-								{{ student.progress }}% {{ __('Complete') }}
-							</Badge>
-						</div>
-						<div class="text-sm text-ink-gray-7">
-							{{ student.email }}
+							<div class="text-sm text-ink-gray-7">
+								{{ student.email }}
+							</div>
 						</div>
 					</div>
+					<Button
+						v-if="canEvaluate && batch"
+						variant="subtle"
+						@click="showFinalEvalModal = true"
+					>
+						<template #prefix>
+							<ClipboardCheck class="h-4 w-4 stroke-1.5" />
+						</template>
+						{{ __('Submit Final Evaluation') }}
+					</Button>
 				</div>
 
 				<div class="space-y-8">
@@ -117,17 +129,44 @@
 			</div>
 		</template>
 	</Dialog>
+
+	<FinalEvaluationModal
+		v-if="showFinalEvalModal && batch"
+		v-model="showFinalEvalModal"
+		:intern="student.email"
+		:intern-name="student.full_name"
+		:intern-image="student.user_image"
+		:batch="batch"
+	/>
 </template>
 <script setup>
-import { Avatar, Badge, Dialog } from 'frappe-ui'
+import { Avatar, Badge, Button, Dialog } from 'frappe-ui'
+import { ref, computed, inject } from 'vue'
+import { ClipboardCheck } from 'lucide-vue-next'
 import StudentHeatmap from '@/components/StudentHeatmap.vue'
+import FinalEvaluationModal from '@/components/Modals/FinalEvaluationModal.vue'
 
 const show = defineModel()
+const showFinalEvalModal = ref(false)
+const user = inject('$user')
+
 const props = defineProps({
 	student: {
 		type: Object,
 		default: null,
 	},
+	batch: {
+		type: String,
+		default: null,
+	},
+})
+
+const canEvaluate = computed(() => {
+	return (
+		user?.data?.is_moderator ||
+		user?.data?.is_evaluator ||
+		user?.data?.is_instructor
+	)
 })
 
 const isAssignment = (value) => {

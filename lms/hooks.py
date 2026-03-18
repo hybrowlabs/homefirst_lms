@@ -144,7 +144,13 @@ scheduler_events = {
 	],
 }
 
-fixtures = ["Custom Field", "Function", "Industry", "LMS Category"]
+fixtures = [
+	"Custom Field",
+	"Function",
+	"Industry",
+	"LMS Category",
+	{"dt": "Role", "filters": [["name", "=", "LMS Intern"]]},
+]
 
 # Testing
 # -------

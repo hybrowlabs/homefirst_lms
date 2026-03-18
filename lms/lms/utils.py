@@ -1346,6 +1346,19 @@ def get_batch_courses(batch):
 @frappe.whitelist()
 def get_assessments(batch):
 	member = frappe.session.user
+
+	# Access gate: admins (Moderator / Batch Evaluator) or enrolled interns
+	is_admin = has_moderator_role() or frappe.db.exists(
+		"Has Role", {"parent": member, "role": "Batch Evaluator"}
+	)
+	is_intern = "LMS Intern" in frappe.get_roles(member)
+	is_batch_member = frappe.db.exists(
+		"LMS Batch Enrollment", {"batch": batch, "member": member}
+	)
+	if not (is_admin or (is_intern and is_batch_member)):
+		return []
+
+	# Assessments explicitly linked via the LMS Assessment child table
 	assessments = frappe.get_all(
 		"LMS Assessment",
 		{"parent": batch},
@@ -1356,12 +1369,27 @@ def get_assessments(batch):
 	for assessment in assessments:
 		if assessment.assessment_type == "LMS Assignment":
 			assessment = get_assignment_details(assessment, member)
-
 		elif assessment.assessment_type == "LMS Quiz":
 			assessment = get_quiz_details(assessment, member)
-
 		elif assessment.assessment_type == "LMS Programming Exercise":
 			assessment = get_exercise_details(assessment, member)
+
+	# Also include LMS Assignments linked to the courses in this batch
+	already_included = {
+		a.assessment_name
+		for a in assessments
+		if a.get("assessment_type") == "LMS Assignment"
+	}
+	batch_courses = frappe.get_all("Batch Course", {"parent": batch}, pluck="course")
+	for course in batch_courses:
+		for lms_assignment in frappe.get_all("LMS Assignment", {"course": course}, ["name"]):
+			if lms_assignment.name in already_included:
+				continue
+			assessment = frappe._dict(
+				{"assessment_type": "LMS Assignment", "assessment_name": lms_assignment.name}
+			)
+			assessments.append(get_assignment_details(assessment, member))
+			already_included.add(lms_assignment.name)
 
 	return assessments
 
@@ -1395,6 +1423,53 @@ def get_assignment_details(assessment, member):
 	assessment.url = get_lms_route(f"assignment-submission/{assessment.assessment_name}/{submission_name}")
 
 	return assessment
+
+
+@frappe.whitelist()
+def get_course_assignments(course):
+	"""Return all LMS Assignments for a course, enriched with the current
+	member's submission status.  Accessible to enrolled interns, course
+	instructors, and moderators.  Returns [] for all others."""
+	member = frappe.session.user
+
+	is_intern = "LMS Intern" in frappe.get_roles(member)
+	is_enrolled = frappe.db.exists("LMS Enrollment", {"course": course, "member": member})
+	is_admin = can_modify_course(course) or has_moderator_role()
+
+	if not (is_admin or (is_intern and is_enrolled)):
+		return []
+
+	assignments = frappe.get_all(
+		"LMS Assignment",
+		{"course": course},
+		["name", "title", "type"],
+		order_by="creation asc",
+	)
+
+	for assignment in assignments:
+		existing_submission = frappe.db.exists(
+			"LMS Assignment Submission",
+			{"member": member, "assignment": assignment.name},
+		)
+		if existing_submission:
+			submission = frappe.db.get_value(
+				"LMS Assignment Submission",
+				existing_submission,
+				["name", "status"],
+				as_dict=True,
+			)
+			assignment.submission_name = submission.name
+			assignment.status = submission.status
+		else:
+			assignment.submission_name = None
+			assignment.status = "Not Attempted"
+
+		submission_ref = existing_submission if existing_submission else "new"
+		assignment.url = get_lms_route(
+			f"assignment-submission/{assignment.name}/{submission_ref}"
+		)
+
+	return assignments
 
 
 def get_quiz_details(assessment, member):

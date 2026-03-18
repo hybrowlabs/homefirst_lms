@@ -31,9 +31,9 @@
 			@click="navigateToPage(log)"
 		>
 			<Avatar
-				:image="log.from_user_details.user_image"
+				:image="log.from_user_details?.user_image"
 				size="xl"
-				:label="log.from_user_details.full_name"
+				:label="log.from_user_details?.full_name"
 			/>
 			<div class="space-y-2 w-full">
 				<div class="flex items-center justify-between">

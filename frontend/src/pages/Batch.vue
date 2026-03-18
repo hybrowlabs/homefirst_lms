@@ -283,7 +283,7 @@ const tabs = computed(() => {
 		icon: Laptop,
 	})
 
-	if (isAdmin.value) {
+	if (isAdmin.value || isStudent.value) {
 		batchTabs.push({
 			label: 'Assessments',
 			icon: BookOpenCheck,

@@ -1019,21 +1019,110 @@ def _is_course_privileged(user, course):
 	return bool(frappe.db.exists("Course Instructor", {"parent": course, "instructor": user}))
 
 
-def _mark_sequential_locks(outline, course):
+def _check_chapter_progression(lesson_name, course):
+	"""Chapter-aware access check for sequential lesson enforcement.
+
+	Rule:
+	  1. ALL lessons in every chapter that comes BEFORE this lesson's chapter
+	     must be complete.
+	  2. The immediately preceding lesson WITHIN this chapter must be complete.
+
+	Returns (is_blocked, blocking_lesson_title).
+	Returns (False, None) when the lesson is freely accessible.
 	"""
-	Walk every lesson in course order and set is_locked=True on any lesson
-	whose immediate predecessor is not yet complete.
+	chapters = frappe.get_all(
+		"Chapter Reference",
+		{"parent": course},
+		["chapter"],
+		order_by="idx asc",
+	)
+
+	# Build ordered list of chapters with their lesson lists
+	ordered_chapters = []
+	chapter_lesson_map = {}
+	for chap_ref in chapters:
+		lessons = frappe.get_all(
+			"Lesson Reference",
+			{"parent": chap_ref.chapter},
+			["lesson"],
+			order_by="idx asc",
+		)
+		lesson_list = [l.lesson for l in lessons]
+		chapter_lesson_map[chap_ref.chapter] = lesson_list
+		ordered_chapters.append(chap_ref.chapter)
+
+	# Locate which chapter this lesson belongs to
+	this_chapter_idx = None
+	pos_in_chapter = None
+	for i, chap in enumerate(ordered_chapters):
+		if lesson_name in chapter_lesson_map[chap]:
+			this_chapter_idx = i
+			pos_in_chapter = chapter_lesson_map[chap].index(lesson_name)
+			break
+
+	if this_chapter_idx is None:
+		return False, None  # lesson not found in any chapter → allow through
+
+	# Check 1: every lesson in all PRECEDING chapters must be complete
+	for i in range(this_chapter_idx):
+		for prev_lesson in chapter_lesson_map[ordered_chapters[i]]:
+			if not get_progress(course, prev_lesson):
+				prev_title = frappe.db.get_value("Course Lesson", prev_lesson, "title")
+				return True, prev_title
+
+	# Check 2: immediate predecessor WITHIN this chapter must be complete
+	if pos_in_chapter > 0:
+		prev_in_chap = chapter_lesson_map[ordered_chapters[this_chapter_idx]][pos_in_chapter - 1]
+		if not get_progress(course, prev_in_chap):
+			prev_title = frappe.db.get_value("Course Lesson", prev_in_chap, "title")
+			return True, prev_title
+
+	return False, None
+
+
+def _mark_sequential_locks(outline, course):
+	"""Chapter-aware sequential lock for the course outline.
+
+	Rule:
+	  - All lessons in a chapter are locked until all lessons in every
+	    preceding chapter are complete.
+	  - Within an accessible chapter, lessons are locked sequentially
+	    (previous lesson in the chapter must be done).
+
 	Moderators and instructors are never locked.
 	"""
 	user = frappe.session.user
 	if _is_course_privileged(user, course):
 		return
 
-	prev_complete = True  # the lesson before the very first one is implicitly "complete"
+	# Fetch every completed lesson for this user+course in one query
+	completed = set(
+		frappe.get_all(
+			"LMS Course Progress",
+			{"course": course, "member": user, "status": "Complete"},
+			pluck="lesson",
+		)
+	)
+
+	all_prev_chapters_complete = True  # trivially true before chapter 1
+
 	for chapter in outline:
-		for lesson in chapter.get("lessons", []):
-			lesson["is_locked"] = not prev_complete
-			prev_complete = bool(lesson.get("is_complete"))
+		lessons = chapter.get("lessons", [])
+
+		if not all_prev_chapters_complete:
+			# A previous chapter is not fully done — lock the entire chapter
+			for lesson in lessons:
+				lesson["is_locked"] = True
+		else:
+			# Previous chapters are all done; apply within-chapter sequential lock
+			prev_lesson_complete = True  # first lesson has no predecessor
+			for lesson in lessons:
+				lesson["is_locked"] = not prev_lesson_complete
+				prev_lesson_complete = lesson["name"] in completed
+
+		# This chapter counts as "done" only when all its lessons are complete
+		chapter_done = all(lesson["name"] in completed for lesson in lessons) if lessons else True
+		all_prev_chapters_complete = all_prev_chapters_complete and chapter_done
 
 
 def _mark_doj_locks(outline, course):
@@ -1116,12 +1205,12 @@ def get_lesson(course, chapter, lesson):
 				"unlock_date": unlock_date,
 			}
 
-	# Sequential enforcement: enrolled students cannot access a lesson
-	# until the previous lesson in the course is complete.
+	# Sequential enforcement: enrolled students cannot access a lesson until all
+	# lessons in preceding chapters are complete AND the previous lesson within
+	# the same chapter is complete.
 	if membership and not _is_course_privileged(frappe.session.user, course):
-		prev_lesson = _get_previous_lesson_name(lesson_name, course)
-		if prev_lesson and not get_progress(course, prev_lesson):
-			prev_title = frappe.db.get_value("Course Lesson", prev_lesson, "title")
+		is_blocked, prev_title = _check_chapter_progression(lesson_name, course)
+		if is_blocked:
 			return {
 				"lesson_locked": 1,
 				"title": lesson_details.title,

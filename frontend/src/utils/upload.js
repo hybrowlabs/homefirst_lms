@@ -65,11 +65,15 @@ export class Upload {
 			app.mount(this.wrapper)
 			return
 		} else if (file.file_type == 'PDF') {
+			// #toolbar=0&navpanes=0 suppresses the download/print toolbar in
+			// Chromium-based browsers (Chrome, Edge, Brave). Firefox and Safari
+			// ignore these fragment parameters — a direct file URL is still
+			// technically accessible via browser dev tools regardless of browser.
 			this.wrapper.innerHTML = `<iframe src="${
 				window.location.origin
 			}${encodeURI(
 				file.file_url
-			)}" width='100%' height='700px' class="mb-4" type="application/pdf"></iframe>`
+			)}#toolbar=0&navpanes=0" width='100%' height='700px' class="mb-4" type="application/pdf"></iframe>`
 			return
 		} else {
 			this.wrapper.innerHTML = `<img class="mb-4" src=${encodeURI(

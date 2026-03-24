@@ -571,7 +571,7 @@ const lesson = createResource({
 	auto: true,
 })
 
-const setupLesson = (data) => {
+const setupLesson = async (data) => {
 	if (Object.keys(data).length === 0) {
 		router.push({
 			name: 'CourseDetail',
@@ -590,6 +590,9 @@ const setupLesson = (data) => {
 	}
 	lessonProgress.value = data.membership?.progress
 	lessonComplete.value = !!data.progress
+	// Wait for Vue to flush DOM updates so v-if="data.content" has rendered
+	// the #editor div before EditorJS tries to mount into it.
+	await nextTick()
 	if (data.content) editor.value = renderEditor('editor', data.content)
 	if (
 		data.instructor_content &&
@@ -816,7 +819,11 @@ const cleanYouTubeUrl = (url) => {
 watch(
 	() => lesson.data,
 	async (data) => {
-		setupLesson(data)
+		// Await setupLesson so that EditorJS fully mounts (including its
+		// internal nextTick) before getPlyrSource queries the DOM for video
+		// elements. Without await, the video-player attachment races against
+		// EditorJS rendering and the lesson appears blank on the first click.
+		await setupLesson(data)
 		getPlyrSource()
 		updateNotes()
 		if (data.icon == 'icon-youtube' && data.youtube) clearInterval(timerInterval)

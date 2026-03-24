@@ -14,20 +14,23 @@ from frappe import _
 # ---------------------------------------------------------------------------
 
 VIDEO_EXTENSIONS = {"mp4", "mov", "avi", "mkv", "webm"}
+AUDIO_EXTENSIONS = {"mp3", "wav", "ogg"}
 IMAGE_EXTENSIONS = {"jpg", "jpeg", "png", "gif", "webp", "svg"}
 PDF_EXTENSION = "pdf"
 PPT_EXTENSIONS = {"ppt", "pptx"}
 
-ALLOWED_EXTENSIONS = VIDEO_EXTENSIONS | IMAGE_EXTENSIONS | {PDF_EXTENSION} | PPT_EXTENSIONS
+ALLOWED_EXTENSIONS = VIDEO_EXTENSIONS | AUDIO_EXTENSIONS | IMAGE_EXTENSIONS | {PDF_EXTENSION} | PPT_EXTENSIONS
 
 
 def _detect_type(file_name):
-	"""Return (category, ext) where category is 'video'|'pdf'|'ppt'|'image'|'unknown'."""
+	"""Return (category, ext) where category is 'video'|'audio'|'pdf'|'ppt'|'image'|'unknown'."""
 	if "." not in file_name:
 		return "unknown", ""
 	ext = file_name.rsplit(".", 1)[-1].lower()
 	if ext in VIDEO_EXTENSIONS:
 		return "video", ext
+	if ext in AUDIO_EXTENSIONS:
+		return "audio", ext
 	if ext == PDF_EXTENSION:
 		return "pdf", "PDF"
 	if ext in PPT_EXTENSIONS:
@@ -59,24 +62,45 @@ def _convert_ppt_to_pdf(file_url):
 
 	output_dir = os.path.dirname(file_path)
 
-	result = subprocess.run(
-		[
-			"libreoffice",
-			"--headless",
-			"--convert-to",
-			"pdf",
-			"--outdir",
-			output_dir,
-			file_path,
-		],
-		capture_output=True,
-		text=True,
-		timeout=120,
-	)
+	try:
+		result = subprocess.run(
+			[
+				"libreoffice",
+				"--headless",
+				"--convert-to",
+				"pdf",
+				"--outdir",
+				output_dir,
+				file_path,
+			],
+			capture_output=True,
+			text=True,
+			timeout=120,
+		)
+	except FileNotFoundError:
+		frappe.throw(
+			_(
+				"LibreOffice is not installed on this server. "
+				"PPT/PPTX conversion requires LibreOffice. "
+				"Please contact your system administrator."
+			)
+		)
+	except subprocess.TimeoutExpired:
+		frappe.throw(
+			_(
+				"PPT conversion timed out after 120 seconds. "
+				"The file may be too large or complex. "
+				"Try converting to PDF before uploading."
+			)
+		)
 
 	if result.returncode != 0:
+		# Extract meaningful part of LibreOffice stderr (first 300 chars)
+		detail = (result.stderr or result.stdout or "").strip()[:300]
 		frappe.throw(
-			_("LibreOffice conversion failed: {0}").format(result.stderr or result.stdout)
+			_("PPT to PDF conversion failed. {0}").format(
+				detail or _("LibreOffice reported an error with no details.")
+			)
 		)
 
 	base_name = os.path.splitext(os.path.basename(file_path))[0]
@@ -232,6 +256,8 @@ def create_lesson_from_file(course, chapter, file_url, file_name):
 		file_type_key = "PDF"
 	elif file_type == "video":
 		file_type_key = ext  # 'mp4', 'mov', etc.
+	elif file_type == "audio":
+		file_type_key = ext  # 'mp3', 'wav', 'ogg'
 	elif file_type == "pdf":
 		file_type_key = "PDF"
 	else:  # image
@@ -246,3 +272,95 @@ def create_lesson_from_file(course, chapter, file_url, file_name):
 	except Exception:
 		frappe.log_error(frappe.get_traceback(), "M4 bulk_upload: lesson creation failed")
 		return {"status": "Error", "message": _("Failed to create lesson. Check error log.")}
+
+
+@frappe.whitelist()
+def get_chapter_lessons(chapter):
+	"""Return the ordered lesson list for a chapter (for the lesson selector in lesson-mode upload)."""
+	if not frappe.db.exists("Course Chapter", chapter):
+		frappe.throw(_("Chapter not found"))
+
+	rows = frappe.get_all(
+		"Lesson Reference",
+		{"parent": chapter},
+		["lesson", "idx"],
+		order_by="idx",
+	)
+	result = []
+	for row in rows:
+		title = frappe.db.get_value("Course Lesson", row.lesson, "title")
+		result.append({"name": row.lesson, "title": title, "idx": row.idx})
+	return result
+
+
+@frappe.whitelist()
+def append_file_to_lesson(course, lesson_name, file_url, file_name):
+	"""
+	Append a file as a new content block inside an existing Course Lesson.
+	Used when admin wants to add content to a lesson rather than create a new one.
+
+	Returns:
+	  {"status": "Done",  "lesson_name": <name>}
+	  {"status": "Error", "message": <str>}
+	"""
+	from lms.lms.api import can_modify_course
+
+	if not can_modify_course(course):
+		return {
+			"status": "Error",
+			"message": _("You do not have permission to modify this course."),
+		}
+
+	if not frappe.db.exists("Course Lesson", lesson_name):
+		return {"status": "Error", "message": _("Lesson not found")}
+
+	file_type, ext = _detect_type(file_name)
+	if file_type == "unknown":
+		return {
+			"status": "Error",
+			"message": _("Unsupported file type: .{0}").format(ext),
+		}
+
+	if file_type == "ppt":
+		try:
+			file_url = _convert_ppt_to_pdf(file_url)
+		except Exception as e:
+			return {"status": "Error", "message": str(e)}
+		file_type_key = "PDF"
+	elif file_type == "video":
+		file_type_key = ext
+	elif file_type == "audio":
+		file_type_key = ext
+	elif file_type == "pdf":
+		file_type_key = "PDF"
+	else:
+		file_type_key = ext
+
+	try:
+		lesson = frappe.get_doc("Course Lesson", lesson_name)
+		new_block = {
+			"id": frappe.generate_hash(length=10),
+			"type": "upload",
+			"data": {
+				"file_url": file_url,
+				"file_type": file_type_key,
+				"quizzes": [],
+			},
+		}
+		if lesson.content:
+			content_data = json.loads(lesson.content)
+		else:
+			content_data = {
+				"time": int(frappe.utils.now_datetime().timestamp() * 1000),
+				"blocks": [],
+				"version": "2.29.0",
+			}
+		content_data["blocks"].append(new_block)
+		content_data["time"] = int(frappe.utils.now_datetime().timestamp() * 1000)
+		lesson.content = json.dumps(content_data)
+		lesson.save(ignore_permissions=True)
+		frappe.db.commit()
+		return {"status": "Done", "lesson_name": lesson_name}
+	except Exception:
+		frappe.log_error(frappe.get_traceback(), "M4 bulk_upload: append to lesson failed")
+		return {"status": "Error", "message": _("Failed to append file to lesson. Check error log.")}

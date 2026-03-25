@@ -544,12 +544,12 @@ const startUpload = async () => {
 // ---------------------------------------------------------------------------
 
 const uploadToFrappe = (file) => {
-	// Check file size client-side before sending (Frappe default max_file_size is 25 MB)
-	const maxBytes = 25 * 1024 * 1024
+	// Check file size client-side before sending (max_file_size must be set to 2 GB in site config)
+	const maxBytes = 2 * 1024 * 1024 * 1024
 	if (file.size > maxBytes) {
 		return Promise.reject(
 			new Error(
-				__('File is too large ({0} MB). Maximum allowed size is 25 MB.').format(
+				__('File is too large ({0} MB). Maximum allowed size is 2 GB.').format(
 					(file.size / 1024 / 1024).toFixed(1)
 				)
 			)

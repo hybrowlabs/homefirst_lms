@@ -1,0 +1,12 @@
+[
+ {
+  "doctype": "Property Setter",
+  "name": "Employee-date_of_birth-reqd",
+  "doctype_or_field": "DocField",
+  "doc_type": "Employee",
+  "field_name": "date_of_birth",
+  "property": "reqd",
+  "property_type": "Check",
+  "value": "0"
+ }
+]

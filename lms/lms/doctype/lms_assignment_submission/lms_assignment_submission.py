@@ -38,16 +38,25 @@ class LMSAssignmentSubmission(Document):
 			frappe.throw(_("Please enter a valid URL."))
 
 	def validate_grade_access(self):
-		"""Prevent students from self-grading their own submissions."""
+		"""Prevent students from self-grading or modifying graded submissions."""
 		if self.is_new():
 			return
 		doc_before_save = self.get_doc_before_save()
 		if not doc_before_save:
 			return
-		if doc_before_save.status == self.status:
-			return
+
 		grading_roles = {"System Manager", "Moderator", "Batch Evaluator", "Course Creator"}
-		if not grading_roles & set(frappe.get_roles(frappe.session.user)):
+		user_roles = set(frappe.get_roles(frappe.session.user))
+		is_grader = bool(grading_roles & user_roles)
+
+		# Block answer/attachment edits once graded (non-graders only)
+		if not is_grader and doc_before_save.status in GRADED_STATUSES:
+			if (self.answer != doc_before_save.answer or
+					self.assignment_attachment != doc_before_save.assignment_attachment):
+				frappe.throw(_("This submission has been graded and can no longer be modified."))
+
+		# Block status changes by non-graders
+		if doc_before_save.status != self.status and not is_grader:
 			frappe.throw(_("You do not have permission to grade this submission."))
 
 	def validate_status(self):

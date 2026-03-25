@@ -18,7 +18,8 @@ class LMSCertificate(Document):
 		self.name = make_autoname("hash", self.doctype)
 
 	def after_insert(self):
-		self.send_certification_email()
+		# Certificate email disabled per client requirement (M3).
+		# self.send_certification_email()
 		capture("certificate_issued", "lms")
 
 	def send_certification_email(self):

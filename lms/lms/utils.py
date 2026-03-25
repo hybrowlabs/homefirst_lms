@@ -722,6 +722,15 @@ def guest_access_allowed():
 	return True
 
 
+def _is_platform_admin():
+	"""Returns True for users who should see all courses regardless of enrollment:
+	System Manager, Moderator, Course Creator, or Batch Evaluator."""
+	if frappe.session.user == "Guest":
+		return False
+	roles = set(frappe.get_roles(frappe.session.user))
+	return bool(roles & {"System Manager", "Moderator", "Course Creator", "Batch Evaluator"})
+
+
 @frappe.whitelist(allow_guest=True)
 @rate_limit(limit=500, seconds=60 * 60)
 def get_courses(filters=None, start=0):
@@ -732,6 +741,15 @@ def get_courses(filters=None, start=0):
 
 	if not filters:
 		filters = {}
+
+	# M5: LMS Student users (non-admin) must only see courses they are enrolled in.
+	if has_student_role() and not _is_platform_admin():
+		enrolled = frappe.get_all(
+			"LMS Enrollment", {"member": frappe.session.user}, pluck="course"
+		)
+		# Merge with any name filter already present (e.g. search by title uses or_filters,
+		# so a plain "name" filter here is safe).
+		filters["name"] = ["in", enrolled or [""]]
 
 	filters, or_filters, show_featured = update_course_filters(filters)
 	fields = get_course_fields()
@@ -904,6 +922,14 @@ def get_course_details(course):
 			["name", "course", "current_lesson", "progress", "member"],
 			as_dict=1,
 		)
+		# M5: LMS Student users who are not enrolled must not access course details.
+		if (
+			not course_details.membership
+			and has_student_role()
+			and not _is_platform_admin()
+			and not is_instructor(course)
+		):
+			return {}
 
 	if course_details.membership and course_details.membership.current_lesson:
 		course_details.current_lesson = get_lesson_index(course_details.membership.current_lesson)
@@ -952,6 +978,19 @@ def get_course_outline(course, progress=False):
 
 	if not guest_access_allowed():
 		return []
+
+	# M5: LMS Student users who are not enrolled must not retrieve the course outline.
+	if (
+		frappe.session.user != "Guest"
+		and has_student_role()
+		and not _is_platform_admin()
+		and not is_instructor(course)
+	):
+		is_enrolled = frappe.db.exists(
+			"LMS Enrollment", {"course": course, "member": frappe.session.user}
+		)
+		if not is_enrolled:
+			return []
 
 	outline = []
 	chapters = frappe.get_all("Chapter Reference", {"parent": course}, ["chapter", "idx"], order_by="idx")
@@ -1019,21 +1058,133 @@ def _is_course_privileged(user, course):
 	return bool(frappe.db.exists("Course Instructor", {"parent": course, "instructor": user}))
 
 
-def _mark_sequential_locks(outline, course):
+def _check_chapter_progression(lesson_name, course):
+	"""Chapter-aware access check for sequential lesson enforcement.
+
+	Rule:
+	  1. ALL lessons in every chapter that comes BEFORE this lesson's chapter
+	     must be complete.
+	  2. The immediately preceding lesson WITHIN this chapter must be complete.
+
+	Returns (is_blocked, blocking_lesson_title).
+	Returns (False, None) when the lesson is freely accessible.
 	"""
-	Walk every lesson in course order and set is_locked=True on any lesson
-	whose immediate predecessor is not yet complete.
+	chapters = frappe.get_all(
+		"Chapter Reference",
+		{"parent": course},
+		["chapter"],
+		order_by="idx asc",
+	)
+
+	# Build ordered list of chapters with their lesson lists
+	ordered_chapters = []
+	chapter_lesson_map = {}
+	for chap_ref in chapters:
+		lessons = frappe.get_all(
+			"Lesson Reference",
+			{"parent": chap_ref.chapter},
+			["lesson"],
+			order_by="idx asc",
+		)
+		lesson_list = [l.lesson for l in lessons]
+		chapter_lesson_map[chap_ref.chapter] = lesson_list
+		ordered_chapters.append(chap_ref.chapter)
+
+	# Locate which chapter this lesson belongs to
+	this_chapter_idx = None
+	pos_in_chapter = None
+	for i, chap in enumerate(ordered_chapters):
+		if lesson_name in chapter_lesson_map[chap]:
+			this_chapter_idx = i
+			pos_in_chapter = chapter_lesson_map[chap].index(lesson_name)
+			break
+
+	if this_chapter_idx is None:
+		return False, None  # lesson not found in any chapter → allow through
+
+	# Check 1: preceding chapters must be "done enough" using contiguous-from-start logic.
+	# A chapter is considered complete if all lessons from position 0 up to and including
+	# the last completed lesson form a contiguous complete block.  This means newly appended
+	# lessons (at higher idx positions) do not retroactively block already-completed chapters.
+	for i in range(this_chapter_idx):
+		lessons_in_chap = chapter_lesson_map[ordered_chapters[i]]
+		if not lessons_in_chap:
+			continue  # empty chapter — treat as done
+		completed_positions = [j for j, l in enumerate(lessons_in_chap) if get_progress(course, l)]
+		if not completed_positions:
+			# No lesson completed at all in this chapter — blocked on its first lesson
+			prev_title = frappe.db.get_value("Course Lesson", lessons_in_chap[0], "title")
+			return True, prev_title
+		last_pos = max(completed_positions)
+		# Verify the contiguous block: every lesson from 0..last_pos must be complete
+		for j in range(last_pos + 1):
+			if not get_progress(course, lessons_in_chap[j]):
+				prev_title = frappe.db.get_value("Course Lesson", lessons_in_chap[j], "title")
+				return True, prev_title
+
+	# Check 2: immediate predecessor WITHIN this chapter must be complete
+	if pos_in_chapter > 0:
+		prev_in_chap = chapter_lesson_map[ordered_chapters[this_chapter_idx]][pos_in_chapter - 1]
+		if not get_progress(course, prev_in_chap):
+			prev_title = frappe.db.get_value("Course Lesson", prev_in_chap, "title")
+			return True, prev_title
+
+	return False, None
+
+
+def _mark_sequential_locks(outline, course):
+	"""Chapter-aware sequential lock for the course outline.
+
+	Rule:
+	  - All lessons in a chapter are locked until all lessons in every
+	    preceding chapter are complete.
+	  - Within an accessible chapter, lessons are locked sequentially
+	    (previous lesson in the chapter must be done).
+
 	Moderators and instructors are never locked.
 	"""
 	user = frappe.session.user
 	if _is_course_privileged(user, course):
 		return
 
-	prev_complete = True  # the lesson before the very first one is implicitly "complete"
+	# Fetch every completed lesson for this user+course in one query
+	completed = set(
+		frappe.get_all(
+			"LMS Course Progress",
+			{"course": course, "member": user, "status": "Complete"},
+			pluck="lesson",
+		)
+	)
+
+	all_prev_chapters_complete = True  # trivially true before chapter 1
+
 	for chapter in outline:
-		for lesson in chapter.get("lessons", []):
-			lesson["is_locked"] = not prev_complete
-			prev_complete = bool(lesson.get("is_complete"))
+		lessons = chapter.get("lessons", [])
+
+		if not all_prev_chapters_complete:
+			# A previous chapter is not fully done — lock the entire chapter
+			for lesson in lessons:
+				lesson["is_locked"] = True
+		else:
+			# Previous chapters are all done; apply within-chapter sequential lock
+			prev_lesson_complete = True  # first lesson has no predecessor
+			for lesson in lessons:
+				lesson["is_locked"] = not prev_lesson_complete
+				prev_lesson_complete = lesson["name"] in completed
+
+		# Contiguous-from-start: a chapter is "done enough" when all lessons from
+		# position 0 up to the last completed lesson form a contiguous complete block.
+		# Newly appended lessons at the end don't retroactively mark the chapter incomplete.
+		if not lessons:
+			chapter_done = True
+		else:
+			completed_positions = [i for i, l in enumerate(lessons) if l["name"] in completed]
+			if not completed_positions:
+				chapter_done = False
+			else:
+				last_pos = max(completed_positions)
+				chapter_done = all(lessons[i]["name"] in completed for i in range(last_pos + 1))
+		all_prev_chapters_complete = all_prev_chapters_complete and chapter_done
 
 
 def _mark_doj_locks(outline, course):
@@ -1088,12 +1239,7 @@ def get_lesson(course, chapter, lesson):
 		as_dict=1,
 	)
 
-	if (
-		not lesson_details.include_in_preview
-		and not membership
-		and not has_moderator_role()
-		and not is_instructor(course)
-	):
+	if not membership and not has_moderator_role() and not is_instructor(course):
 		return {
 			"no_preview": 1,
 			"title": lesson_details.title,
@@ -1116,12 +1262,12 @@ def get_lesson(course, chapter, lesson):
 				"unlock_date": unlock_date,
 			}
 
-	# Sequential enforcement: enrolled students cannot access a lesson
-	# until the previous lesson in the course is complete.
+	# Sequential enforcement: enrolled students cannot access a lesson until all
+	# lessons in preceding chapters are complete AND the previous lesson within
+	# the same chapter is complete.
 	if membership and not _is_course_privileged(frappe.session.user, course):
-		prev_lesson = _get_previous_lesson_name(lesson_name, course)
-		if prev_lesson and not get_progress(course, prev_lesson):
-			prev_title = frappe.db.get_value("Course Lesson", prev_lesson, "title")
+		is_blocked, prev_title = _check_chapter_progression(lesson_name, course)
+		if is_blocked:
 			return {
 				"lesson_locked": 1,
 				"title": lesson_details.title,
@@ -1347,15 +1493,14 @@ def get_batch_courses(batch):
 def get_assessments(batch):
 	member = frappe.session.user
 
-	# Access gate: admins (Moderator / Batch Evaluator) or enrolled interns
+	# Access gate: admins (Moderator / Batch Evaluator) or enrolled batch members
 	is_admin = has_moderator_role() or frappe.db.exists(
 		"Has Role", {"parent": member, "role": "Batch Evaluator"}
 	)
-	is_intern = "LMS Intern" in frappe.get_roles(member)
 	is_batch_member = frappe.db.exists(
 		"LMS Batch Enrollment", {"batch": batch, "member": member}
 	)
-	if not (is_admin or (is_intern and is_batch_member)):
+	if not (is_admin or is_batch_member):
 		return []
 
 	# Assessments explicitly linked via the LMS Assessment child table
@@ -1432,11 +1577,10 @@ def get_course_assignments(course):
 	instructors, and moderators.  Returns [] for all others."""
 	member = frappe.session.user
 
-	is_intern = "LMS Intern" in frappe.get_roles(member)
 	is_enrolled = frappe.db.exists("LMS Enrollment", {"course": course, "member": member})
 	is_admin = can_modify_course(course) or has_moderator_role()
 
-	if not (is_admin or (is_intern and is_enrolled)):
+	if not (is_admin or is_enrolled):
 		return []
 
 	assignments = frappe.get_all(

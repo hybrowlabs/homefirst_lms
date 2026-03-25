@@ -19,7 +19,7 @@
 			<div class="text-sm text-ink-gray-6">
 				{{
 					__(
-						'Upload multiple files at once. Each file will become a new lesson in the selected chapter. Supported: MP4, MOV, PDF, PPT, PPTX, images.'
+						'Upload multiple files at once. Supported: MP4, MOV, PDF, PPT, PPTX, MP3, WAV, OGG, images.'
 					)
 				}}
 			</div>
@@ -59,6 +59,59 @@
 				/>
 			</div>
 
+			<!-- Upload mode toggle -->
+			<div
+				v-if="selectedChapterName"
+				class="flex items-center space-x-3 rounded-md border bg-surface-gray-1 px-4 py-3"
+			>
+				<span class="text-sm font-medium text-ink-gray-7">
+					{{ __('Upload mode:') }}
+				</span>
+				<label class="flex items-center space-x-2 cursor-pointer">
+					<input
+						type="radio"
+						v-model="uploadMode"
+						value="new_lesson"
+						class="accent-blue-600"
+					/>
+					<span class="text-sm text-ink-gray-8">
+						{{ __('Create new lesson per file') }}
+					</span>
+				</label>
+				<label class="flex items-center space-x-2 cursor-pointer">
+					<input
+						type="radio"
+						v-model="uploadMode"
+						value="append_lesson"
+						class="accent-blue-600"
+					/>
+					<span class="text-sm text-ink-gray-8">
+						{{ __('Add to existing lesson') }}
+					</span>
+				</label>
+			</div>
+
+			<!-- Lesson selector (only in append mode) -->
+			<div v-if="uploadMode === 'append_lesson' && selectedChapterName" class="space-y-1">
+				<label class="block text-sm font-medium text-ink-gray-7">
+					{{ __('Target Lesson') }}
+					<span class="text-red-500">*</span>
+				</label>
+				<FormControl
+					type="autocomplete"
+					:options="lessonOptions"
+					:modelValue="selectedLesson"
+					@update:modelValue="selectedLesson = $event ?? undefined"
+					:placeholder="
+						loadingLessons ? __('Loading lessons…') : __('Select a lesson…')
+					"
+					:disabled="loadingLessons || lessonOptions.length === 0"
+				/>
+				<div v-if="!loadingLessons && lessonOptions.length === 0" class="text-xs text-ink-gray-4">
+					{{ __('No lessons found in this chapter.') }}
+				</div>
+			</div>
+
 			<!-- Drop zone -->
 			<div
 				class="border-2 border-dashed rounded-lg p-8 text-center transition-colors"
@@ -76,7 +129,7 @@
 					ref="fileInput"
 					type="file"
 					multiple
-					accept="video/*,.pdf,.ppt,.pptx,image/*"
+					accept="video/*,audio/*,.pdf,.ppt,.pptx,image/*"
 					class="hidden"
 					@change="onFilePicked"
 				/>
@@ -86,7 +139,7 @@
 						{{ __('Drag & drop files here, or click to browse') }}
 					</div>
 					<div class="text-xs">
-						{{ __('MP4, MOV, PDF, PPT, PPTX, JPG, PNG, GIF, WebP') }}
+						{{ __('MP4, MOV, PDF, PPT, PPTX, MP3, WAV, OGG, JPG, PNG, GIF, WebP') }}
 					</div>
 				</div>
 			</div>
@@ -124,11 +177,24 @@
 						>
 							<X class="size-4 stroke-1.5" />
 						</button>
-						<!-- Error detail -->
+						<!-- Error detail tooltip -->
 						<Tooltip v-if="item.error" :text="item.error">
-							<AlertCircle class="size-4 stroke-1.5 text-red-500" />
+							<AlertCircle class="size-4 stroke-1.5 text-red-500 cursor-help" />
 						</Tooltip>
 					</div>
+				</div>
+
+				<!-- Inline error messages for failed files -->
+				<div
+					v-for="item in fileQueue.filter((f) => f.status === 'Error')"
+					:key="'err-' + item.id"
+					class="flex items-start space-x-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700"
+				>
+					<AlertCircle class="size-3.5 mt-0.5 shrink-0 stroke-1.5" />
+					<span>
+						<span class="font-medium">{{ item.name }}:</span>
+						{{ item.error }}
+					</span>
 				</div>
 			</div>
 
@@ -163,7 +229,12 @@
 			>
 				<div class="font-medium text-ink-gray-8">{{ __('Upload complete') }}</div>
 				<div class="text-ink-gray-6">
-					{{ doneCount }} {{ __('lessons created') }}
+					{{ doneCount }}
+					{{
+						uploadMode === 'append_lesson'
+							? __('files added to lesson')
+							: __('lessons created')
+					}}
 					<template v-if="errorCount > 0">
 						· {{ errorCount }} {{ __('errors') }}
 					</template>
@@ -188,6 +259,7 @@ import {
 	File,
 	FileText,
 	Image,
+	Music,
 	Upload,
 	Video,
 	X,
@@ -199,12 +271,16 @@ import {
 
 const selectedCourse = ref(undefined)
 const selectedChapter = ref(undefined)
+const selectedLesson = ref(undefined)
 const loadingChapters = ref(false)
+const loadingLessons = ref(false)
 const chapterOptions = ref([])
+const lessonOptions = ref([])
 const isDragging = ref(false)
 const fileInput = ref(null)
 const fileQueue = ref([]) // { id, name, ext, file: File, status, error }
 const isRunning = ref(false)
+const uploadMode = ref('new_lesson') // 'new_lesson' | 'append_lesson'
 
 let _nextId = 1
 
@@ -237,13 +313,21 @@ const selectedChapterName = computed(() =>
 		: selectedChapter.value || null
 )
 
+const selectedLessonName = computed(() =>
+	typeof selectedLesson.value === 'object'
+		? selectedLesson.value?.value ?? null
+		: selectedLesson.value || null
+)
+
 // ---------------------------------------------------------------------------
 // Chapter list (loaded on course change)
 // ---------------------------------------------------------------------------
 
 const onCourseChange = async () => {
 	selectedChapter.value = undefined
+	selectedLesson.value = undefined
 	chapterOptions.value = []
+	lessonOptions.value = []
 	if (!selectedCourseName.value) return
 	loadingChapters.value = true
 	try {
@@ -263,11 +347,42 @@ const onCourseChange = async () => {
 watch(selectedCourse, onCourseChange)
 
 // ---------------------------------------------------------------------------
+// Lesson list (loaded on chapter change, only needed for append mode)
+// ---------------------------------------------------------------------------
+
+const onChapterChange = async () => {
+	selectedLesson.value = undefined
+	lessonOptions.value = []
+	if (!selectedChapterName.value) return
+	loadingLessons.value = true
+	try {
+		const lessons = await call(
+			'lms.lms.bulk_upload.get_chapter_lessons',
+			{ chapter: selectedChapterName.value }
+		)
+		lessonOptions.value = (lessons || []).map((l) => ({
+			label: l.title,
+			value: l.name,
+		}))
+	} finally {
+		loadingLessons.value = false
+	}
+}
+
+watch(selectedChapter, onChapterChange)
+
+// Reset lesson selection when mode changes
+watch(uploadMode, () => {
+	selectedLesson.value = undefined
+})
+
+// ---------------------------------------------------------------------------
 // File helpers
 // ---------------------------------------------------------------------------
 
 const ALLOWED = new Set([
 	'mp4', 'mov', 'avi', 'mkv', 'webm',
+	'mp3', 'wav', 'ogg',
 	'pdf',
 	'ppt', 'pptx',
 	'jpg', 'jpeg', 'png', 'gif', 'webp', 'svg',
@@ -277,9 +392,9 @@ const getExt = (name) => (name.includes('.') ? name.split('.').pop() : '').toLow
 
 const fileIcon = (ext) => {
 	if (['mp4', 'mov', 'avi', 'mkv', 'webm'].includes(ext)) return Video
+	if (['mp3', 'wav', 'ogg'].includes(ext)) return Music
 	if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg'].includes(ext)) return Image
-	if (['ppt', 'pptx'].includes(ext)) return FileText
-	if (ext === 'pdf') return FileText
+	if (['ppt', 'pptx', 'pdf'].includes(ext)) return FileText
 	return File
 }
 
@@ -297,7 +412,7 @@ const statusClass = (status) => {
 
 const addFiles = (rawFiles) => {
 	for (const f of Array.from(rawFiles)) {
-		const ext = f.name.split('.').pop().toLowerCase()
+		const ext = getExt(f.name)
 		if (!ALLOWED.has(ext)) continue
 		fileQueue.value.push({
 			id: _nextId++,
@@ -338,13 +453,14 @@ const clearAll = () => {
 // Computed helpers
 // ---------------------------------------------------------------------------
 
-const canStart = computed(
-	() =>
-		selectedCourseName.value &&
-		selectedChapterName.value &&
-		fileQueue.value.length > 0 &&
-		!isRunning.value
-)
+const canStart = computed(() => {
+	if (!selectedCourseName.value) return false
+	if (!selectedChapterName.value) return false
+	if (fileQueue.value.length === 0) return false
+	if (isRunning.value) return false
+	if (uploadMode.value === 'append_lesson' && !selectedLessonName.value) return false
+	return true
+})
 
 const isDone = computed(
 	() =>
@@ -365,7 +481,7 @@ const startUpload = async () => {
 	if (!canStart.value) return
 	isRunning.value = true
 
-	// Process files sequentially so the chapter idx ordering is predictable
+	// Process files sequentially so chapter idx ordering is predictable
 	for (const item of fileQueue.value) {
 		if (item.status !== 'Pending') continue
 
@@ -382,19 +498,32 @@ const startUpload = async () => {
 			continue
 		}
 
-		// Step 2 — convert PPT/create lesson via backend
+		// Step 2 — convert PPT / create or append lesson via backend
 		const isPpt = ['ppt', 'pptx'].includes(item.ext)
 		item.status = isPpt ? 'Converting' : 'Processing'
 		try {
-			const response = await call(
-				'lms.lms.bulk_upload.create_lesson_from_file',
-				{
-					course: selectedCourseName.value,
-					chapter: selectedChapterName.value,
-					file_url: fileUrl,
-					file_name: uploadedName || item.name,
-				}
-			)
+			let response
+			if (uploadMode.value === 'append_lesson') {
+				response = await call(
+					'lms.lms.bulk_upload.append_file_to_lesson',
+					{
+						course: selectedCourseName.value,
+						lesson_name: selectedLessonName.value,
+						file_url: fileUrl,
+						file_name: uploadedName || item.name,
+					}
+				)
+			} else {
+				response = await call(
+					'lms.lms.bulk_upload.create_lesson_from_file',
+					{
+						course: selectedCourseName.value,
+						chapter: selectedChapterName.value,
+						file_url: fileUrl,
+						file_name: uploadedName || item.name,
+					}
+				)
+			}
 			if (response?.status === 'Done') {
 				item.status = 'Done'
 			} else {
@@ -411,10 +540,22 @@ const startUpload = async () => {
 }
 
 // ---------------------------------------------------------------------------
-// Frappe file upload helper
+// Frappe file upload helper — with improved error surfacing
 // ---------------------------------------------------------------------------
 
 const uploadToFrappe = (file) => {
+	// Check file size client-side before sending (max_file_size must be set to 2 GB in site config)
+	const maxBytes = 2 * 1024 * 1024 * 1024
+	if (file.size > maxBytes) {
+		return Promise.reject(
+			new Error(
+				__('File is too large ({0} MB). Maximum allowed size is 2 GB.').format(
+					(file.size / 1024 / 1024).toFixed(1)
+				)
+			)
+		)
+	}
+
 	return new Promise((resolve, reject) => {
 		const formData = new FormData()
 		formData.append('file', file)
@@ -427,12 +568,30 @@ const uploadToFrappe = (file) => {
 			},
 			body: formData,
 		})
-			.then((res) => res.json())
+			.then((res) => {
+				if (res.status === 413)
+					throw new Error(
+						__('File is too large. The server rejected it. Check max_file_size in site config.')
+					)
+				if (!res.ok)
+					throw new Error(__('Upload failed (HTTP {0})').format(res.status))
+				return res.json()
+			})
 			.then((data) => {
 				if (data.message?.file_url) {
 					resolve(data.message)
 				} else {
-					reject(new Error(data.exc_type || __('Upload failed')))
+					// Extract the most meaningful error message from Frappe's response
+					let msg = null
+					try {
+						if (data._server_messages) {
+							const parsed = JSON.parse(data._server_messages)
+							msg = parsed?.[0]?.message || parsed?.[0] || null
+						}
+					} catch (_) {}
+					if (!msg && data.exception) msg = data.exception
+					if (!msg && data.exc_type) msg = data.exc_type
+					reject(new Error(msg || __('Upload failed')))
 				}
 			})
 			.catch(reject)

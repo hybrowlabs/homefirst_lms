@@ -42,7 +42,11 @@
 						>
 							{{ submissionResource.doc?.status }}
 						</Badge>
-						<Button variant="solid" @click="submitAssignment()">
+						<Button
+							v-if="canModifyAssignment || canGradeSubmission"
+							variant="solid"
+							@click="submitAssignment()"
+						>
 							{{ __('Save') }}
 						</Button>
 					</div>
@@ -73,7 +77,7 @@
 						}}
 					</div>
 					<FileUploader
-						v-if="!submissionResource.doc?.assignment_attachment"
+						v-if="!submissionResource.doc?.assignment_attachment && canModifyAssignment"
 						:fileTypes="getType()"
 						:uploadArgs="{
 							private: true,
@@ -92,7 +96,10 @@
 						</template>
 					</FileUploader>
 					<div v-else>
-						<div class="flex items-center text-ink-gray-7">
+						<div
+							v-if="submissionResource.doc?.assignment_attachment"
+							class="flex items-center text-ink-gray-7"
+						>
 							<a
 								:href="submissionResource.doc.assignment_attachment"
 								target="_blank"
@@ -117,6 +124,9 @@
 								class="bg-surface-gray-3 rounded-md cursor-pointer stroke-1.5 w-5 h-5 p-1 ml-4"
 							/>
 						</div>
+						<div v-else class="text-sm text-ink-gray-5">
+							{{ __('No file submitted.') }}
+						</div>
 					</div>
 				</div>
 				<div v-else-if="assignment.data.type == 'URL'">
@@ -136,7 +146,7 @@
 					<TextEditor
 						:content="answer"
 						@change="(val) => (answer = val)"
-						:editable="true"
+						:editable="canModifyAssignment"
 						:fixedMenu="true"
 						:uploadArgs="{
 							private: true,
@@ -237,6 +247,13 @@ const props = defineProps({
 
 onMounted(() => {
 	window.addEventListener('keydown', keyboardShortcut)
+	// Start loading the submission doc immediately on mount.
+	// Without this, the doc only loads after assignment.onSuccess fires (two async hops).
+	// If the student clicks Save (or presses Ctrl+S) before both complete, out.doc is
+	// null and frappe-ui's beforeSubmit crashes with Object.assign(null, ...).
+	if (props.submissionName !== 'new') {
+		submissionResource.reload()
+	}
 })
 
 const keyboardShortcut = (e) => {
@@ -328,6 +345,14 @@ watch(
 
 const submitAssignment = () => {
 	if (props.submissionName != 'new') {
+		// Guard: frappe-ui's setValue.beforeSubmit calls Object.assign(out.doc, ...)
+		// which throws TypeError if out.doc is null (doc not yet loaded).
+		if (!submissionResource.doc) {
+			toast.error(__('Please wait for the submission to load.'))
+			submissionResource.reload()
+			return
+		}
+
 		let evaluator =
 			submissionResource.doc && submissionResource.doc.owner != user.data?.name
 				? user.data?.name

@@ -150,6 +150,7 @@ fixtures = [
 	"Industry",
 	"LMS Category",
 	{"dt": "Role", "filters": [["name", "=", "LMS Intern"]]},
+	{"dt": "Property Setter", "filters": [["doc_type", "=", "Employee"], ["field_name", "=", "date_of_birth"]]},
 ]
 
 # Testing

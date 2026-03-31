@@ -29,11 +29,23 @@ frappe.listview_settings["Employee"] = {
 							batch_name: values.batch,
 						},
 						callback(r) {
-							frappe.msgprint(
-								`Assigned: ${r.message.assigned}<br>
-								 Skipped (No User): ${r.message.skipped_no_user}<br>
-								 Skipped (Already in Batch): ${r.message.skipped_existing}`
-							);
+							const m = r.message;
+							let html = "";
+
+							if (m.assigned > 0) {
+								html += `<p style="color:green">✔ <b>${m.assigned}</b> employee(s) assigned to batch.</p>`;
+							}
+							if (m.skipped_no_user > 0) {
+								html += `<p style="color:orange">⚠ <b>${m.skipped_no_user}</b> employee(s) skipped — no LMS user linked yet. Use "Create LMS User" first.</p>`;
+							}
+							if (m.skipped_existing > 0) {
+								html += `<p style="color:gray">ℹ <b>${m.skipped_existing}</b> employee(s) already in this batch.</p>`;
+							}
+							if (!html) {
+								html = "<p>No employees were processed.</p>";
+							}
+
+							frappe.msgprint({ title: "Batch Assignment Result", message: html });
 							dialog.hide();
 							listview.refresh();
 						},
@@ -66,8 +78,8 @@ frappe.listview_settings["Employee"] = {
 						freeze_message: "Creating users, please wait...",
 						callback(r) {
 							if (!r.message) return;
-							const { created, skipped, failed } = r.message;
-							_show_create_user_result(created, skipped, failed);
+							const { created, linked, skipped, failed } = r.message;
+							_show_create_user_result(created, linked || [], skipped, failed);
 							listview.refresh();
 						},
 					});
@@ -77,14 +89,23 @@ frappe.listview_settings["Employee"] = {
 	},
 };
 
-function _show_create_user_result(created, skipped, failed) {
+function _show_create_user_result(created, linked, skipped, failed) {
 	let html = "";
 
 	if (created.length) {
 		html += `<div class="mb-3">
-			<b style="color:green">✔ Created (${created.length})</b>
+			<b style="color:green">✔ Created and linked (${created.length})</b>
 			<ul class="mt-1">
-				${created.map((r) => `<li>${r.employee} → ${r.user}</li>`).join("")}
+				${created.map((r) => `<li>${r.employee} — ${r.email}</li>`).join("")}
+			</ul>
+		</div>`;
+	}
+
+	if (linked.length) {
+		html += `<div class="mb-3">
+			<b style="color:#2d8a4e">✔ Already existed — now linked (${linked.length})</b>
+			<ul class="mt-1">
+				${linked.map((r) => `<li>${r.employee} — ${r.email}</li>`).join("")}
 			</ul>
 		</div>`;
 	}
@@ -100,7 +121,7 @@ function _show_create_user_result(created, skipped, failed) {
 
 	if (failed.length) {
 		html += `<div class="mb-3">
-			<b style="color:red">✖ Failed (${failed.length})</b>
+			<b style="color:red">✖ Could not create (${failed.length})</b>
 			<ul class="mt-1">
 				${failed.map((r) => `<li>${r.employee} (${r.email}): ${r.error}</li>`).join("")}
 			</ul>

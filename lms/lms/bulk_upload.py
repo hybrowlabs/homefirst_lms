@@ -1,6 +1,7 @@
 # M4 · Bulk Upload of Learning Content
 # Each file becomes one Course Lesson using the existing EditorJS 'upload' block structure.
 # PPT/PPTX files are converted to PDF server-side via LibreOffice headless.
+# TXT files are read and stored as inline EditorJS paragraph blocks.
 
 import json
 import os
@@ -18,12 +19,20 @@ AUDIO_EXTENSIONS = {"mp3", "wav", "ogg"}
 IMAGE_EXTENSIONS = {"jpg", "jpeg", "png", "gif", "webp", "svg"}
 PDF_EXTENSION = "pdf"
 PPT_EXTENSIONS = {"ppt", "pptx"}
+TXT_EXTENSION = "txt"
 
-ALLOWED_EXTENSIONS = VIDEO_EXTENSIONS | AUDIO_EXTENSIONS | IMAGE_EXTENSIONS | {PDF_EXTENSION} | PPT_EXTENSIONS
+ALLOWED_EXTENSIONS = (
+	VIDEO_EXTENSIONS
+	| AUDIO_EXTENSIONS
+	| IMAGE_EXTENSIONS
+	| {PDF_EXTENSION}
+	| PPT_EXTENSIONS
+	| {TXT_EXTENSION}
+)
 
 
 def _detect_type(file_name):
-	"""Return (category, ext) where category is 'video'|'audio'|'pdf'|'ppt'|'image'|'unknown'."""
+	"""Return (category, ext) where category is 'video'|'audio'|'pdf'|'ppt'|'txt'|'image'|'unknown'."""
 	if "." not in file_name:
 		return "unknown", ""
 	ext = file_name.rsplit(".", 1)[-1].lower()
@@ -35,6 +44,8 @@ def _detect_type(file_name):
 		return "pdf", "PDF"
 	if ext in PPT_EXTENSIONS:
 		return "ppt", ext
+	if ext == TXT_EXTENSION:
+		return "txt", ext
 	if ext in IMAGE_EXTENSIONS:
 		return "image", ext
 	return "unknown", ext
@@ -49,6 +60,8 @@ def _convert_ppt_to_pdf(file_url):
 	"""
 	Convert an uploaded PPT/PPTX file to PDF using LibreOffice headless.
 	Returns the file_url of the newly created PDF File doc.
+	On conversion failure a user-friendly ValidationError is raised;
+	technical details are written to the Frappe error log only.
 	"""
 	file_doc = frappe.db.get_value(
 		"File", {"file_url": file_url}, ["file_name", "file_url"], as_dict=True
@@ -78,28 +91,38 @@ def _convert_ppt_to_pdf(file_url):
 			timeout=120,
 		)
 	except FileNotFoundError:
+		frappe.log_error(
+			"LibreOffice binary not found on this server. Install LibreOffice to enable PPT conversion.",
+			"M4 bulk_upload: PPT conversion failed",
+		)
 		frappe.throw(
 			_(
-				"LibreOffice is not installed on this server. "
-				"PPT/PPTX conversion requires LibreOffice. "
-				"Please contact your system administrator."
+				"This presentation file could not be processed. "
+				"Please convert it to PDF before uploading, or contact support."
 			)
 		)
 	except subprocess.TimeoutExpired:
+		frappe.log_error(
+			"LibreOffice conversion timed out after 120 seconds.",
+			"M4 bulk_upload: PPT conversion timeout",
+		)
 		frappe.throw(
 			_(
-				"PPT conversion timed out after 120 seconds. "
-				"The file may be too large or complex. "
-				"Try converting to PDF before uploading."
+				"This presentation file took too long to process. "
+				"Please try a smaller file or convert it to PDF before uploading."
 			)
 		)
 
 	if result.returncode != 0:
-		# Extract meaningful part of LibreOffice stderr (first 300 chars)
-		detail = (result.stderr or result.stdout or "").strip()[:300]
+		detail = (result.stderr or result.stdout or "").strip()[:500]
+		frappe.log_error(
+			f"LibreOffice returned non-zero exit code {result.returncode}.\n{detail}",
+			"M4 bulk_upload: PPT conversion failed",
+		)
 		frappe.throw(
-			_("PPT to PDF conversion failed. {0}").format(
-				detail or _("LibreOffice reported an error with no details.")
+			_(
+				"This presentation file could not be converted. "
+				"Please convert it to PDF before uploading, or contact support."
 			)
 		)
 
@@ -107,7 +130,16 @@ def _convert_ppt_to_pdf(file_url):
 	pdf_path = os.path.join(output_dir, base_name + ".pdf")
 
 	if not os.path.exists(pdf_path):
-		frappe.throw(_("LibreOffice finished but PDF output was not found"))
+		frappe.log_error(
+			f"LibreOffice finished but PDF output was not found at {pdf_path}",
+			"M4 bulk_upload: PPT conversion output missing",
+		)
+		frappe.throw(
+			_(
+				"This presentation file could not be processed. "
+				"Please convert it to PDF before uploading, or contact support."
+			)
+		)
 
 	# Derive the public file_url for the new PDF
 	site_public = frappe.get_site_path("public")
@@ -129,7 +161,50 @@ def _convert_ppt_to_pdf(file_url):
 
 
 # ---------------------------------------------------------------------------
-# EditorJS content builder
+# TXT → EditorJS paragraph blocks
+# ---------------------------------------------------------------------------
+
+
+def _build_txt_content(file_url):
+	"""
+	Read the content of an uploaded .txt file and return an EditorJS JSON string
+	with one paragraph block per non-empty paragraph (double-newline separated).
+	Single newlines within a paragraph are converted to <br>.
+	"""
+	file_doc = frappe.db.get_value(
+		"File", {"file_url": file_url}, ["file_url"], as_dict=True
+	)
+	text = ""
+	if file_doc:
+		file_path = frappe.get_site_path("public", file_doc.file_url.lstrip("/"))
+		if os.path.exists(file_path):
+			with open(file_path, "r", encoding="utf-8", errors="replace") as fh:
+				text = fh.read()
+
+	paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
+	if not paragraphs:
+		paragraphs = ["(empty file)"]
+
+	blocks = [
+		{
+			"id": frappe.generate_hash(length=10),
+			"type": "paragraph",
+			"data": {"text": p.replace("\n", "<br>")},
+		}
+		for p in paragraphs
+	]
+
+	return json.dumps(
+		{
+			"time": int(frappe.utils.now_datetime().timestamp() * 1000),
+			"blocks": blocks,
+			"version": "2.29.0",
+		}
+	)
+
+
+# ---------------------------------------------------------------------------
+# EditorJS content builder (for file-based blocks)
 # ---------------------------------------------------------------------------
 
 
@@ -223,6 +298,7 @@ def create_lesson_from_file(course, chapter, file_url, file_name):
 	"""
 	Create one Course Lesson from an already-uploaded Frappe File.
 	Handles PPT/PPTX → PDF conversion automatically.
+	Handles .txt files by reading content as inline paragraph blocks.
 
 	Returns:
 	  {"status": "Done",  "lesson_name": <name>}
@@ -244,15 +320,39 @@ def create_lesson_from_file(course, chapter, file_url, file_name):
 	if file_type == "unknown":
 		return {
 			"status": "Error",
-			"message": _("Unsupported file type: .{0}").format(ext),
+			"message": _(
+				"This file type (.{0}) is not supported. "
+				"Please use PDF, video, audio, image, or text files."
+			).format(ext),
 		}
+
+	# TXT: read content as paragraph blocks (no upload block needed)
+	if file_type == "txt":
+		title = os.path.splitext(file_name)[0]
+		content = _build_txt_content(file_url)
+		try:
+			lesson_name = _create_lesson(title, chapter, course, content)
+			return {"status": "Done", "lesson_name": lesson_name}
+		except Exception:
+			frappe.log_error(frappe.get_traceback(), "M4 bulk_upload: lesson creation failed for txt")
+			return {"status": "Error", "message": _("Failed to create lesson. Check error log.")}
 
 	# PPT/PPTX: convert to PDF first
 	if file_type == "ppt":
 		try:
 			file_url = _convert_ppt_to_pdf(file_url)
-		except Exception as e:
+		except frappe.ValidationError as e:
+			# Already a user-friendly message from _convert_ppt_to_pdf
 			return {"status": "Error", "message": str(e)}
+		except Exception:
+			frappe.log_error(frappe.get_traceback(), "M4 bulk_upload: PPT conversion unexpected error")
+			return {
+				"status": "Error",
+				"message": _(
+					"This presentation file could not be processed. "
+					"Please convert it to PDF before uploading, or contact support."
+				),
+			}
 		file_type_key = "PDF"
 	elif file_type == "video":
 		file_type_key = ext  # 'mp4', 'mov', etc.
@@ -298,6 +398,7 @@ def append_file_to_lesson(course, lesson_name, file_url, file_name):
 	"""
 	Append a file as a new content block inside an existing Course Lesson.
 	Used when admin wants to add content to a lesson rather than create a new one.
+	TXT files are appended as paragraph blocks.
 
 	Returns:
 	  {"status": "Done",  "lesson_name": <name>}
@@ -318,14 +419,50 @@ def append_file_to_lesson(course, lesson_name, file_url, file_name):
 	if file_type == "unknown":
 		return {
 			"status": "Error",
-			"message": _("Unsupported file type: .{0}").format(ext),
+			"message": _(
+				"This file type (.{0}) is not supported. "
+				"Please use PDF, video, audio, image, or text files."
+			).format(ext),
 		}
+
+	# TXT: append paragraph blocks directly
+	if file_type == "txt":
+		try:
+			lesson = frappe.get_doc("Course Lesson", lesson_name)
+			new_content = _build_txt_content(file_url)
+			new_data = json.loads(new_content)
+			if lesson.content:
+				content_data = json.loads(lesson.content)
+			else:
+				content_data = {
+					"time": int(frappe.utils.now_datetime().timestamp() * 1000),
+					"blocks": [],
+					"version": "2.29.0",
+				}
+			content_data["blocks"].extend(new_data["blocks"])
+			content_data["time"] = int(frappe.utils.now_datetime().timestamp() * 1000)
+			lesson.content = json.dumps(content_data)
+			lesson.save(ignore_permissions=True)
+			frappe.db.commit()
+			return {"status": "Done", "lesson_name": lesson_name}
+		except Exception:
+			frappe.log_error(frappe.get_traceback(), "M4 bulk_upload: append txt to lesson failed")
+			return {"status": "Error", "message": _("Failed to append file to lesson. Check error log.")}
 
 	if file_type == "ppt":
 		try:
 			file_url = _convert_ppt_to_pdf(file_url)
-		except Exception as e:
+		except frappe.ValidationError as e:
 			return {"status": "Error", "message": str(e)}
+		except Exception:
+			frappe.log_error(frappe.get_traceback(), "M4 bulk_upload: PPT conversion unexpected error")
+			return {
+				"status": "Error",
+				"message": _(
+					"This presentation file could not be processed. "
+					"Please convert it to PDF before uploading, or contact support."
+				),
+			}
 		file_type_key = "PDF"
 	elif file_type == "video":
 		file_type_key = ext

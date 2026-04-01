@@ -97,8 +97,8 @@ def create_users_for_employees(employee_list):
 				frappe.db.set_value("Employee", emp_name, "user_id", email)
 				frappe.db.commit()
 
-			_send_welcome_email_safe(email)
-			created.append({"employee": emp_name, "user": updated_user_id, "email": email})
+			email_note = _send_welcome_email_safe(email)
+			created.append({"employee": emp_name, "user": updated_user_id, "email": email, "email_note": email_note})
 
 		except Exception as exc:
 			# --- Recovery: check if user was actually created despite the exception ---
@@ -111,8 +111,8 @@ def create_users_for_employees(employee_list):
 				if not frappe.db.get_value("Employee", emp_name, "user_id"):
 					frappe.db.set_value("Employee", emp_name, "user_id", existing_user)
 					frappe.db.commit()
-				_send_welcome_email_safe(email)
-				linked.append({"employee": emp_name, "user": existing_user, "email": email})
+				email_note = _send_welcome_email_safe(email)
+				linked.append({"employee": emp_name, "user": existing_user, "email": email, "email_note": email_note})
 			else:
 				# Genuine failure — surface a friendly message, log technical detail
 				raw = str(exc)
@@ -143,17 +143,27 @@ def _send_welcome_email_safe(email):
 	secure link to complete their registration. Failures are logged only —
 	the user record and employee link are never rolled back because of an
 	email problem.
+
+	Returns an empty string on success, or a clean one-line warning string
+	when the email could not be sent (to surface in the UI result dialog).
+	Also calls frappe.clear_last_message() so that a blocked-email
+	frappe.throw() does not pollute _server_messages with a raw red popup.
 	"""
 	try:
 		user_doc = frappe.get_doc("User", email)
 		# Only send if not already sent during creation
 		if not user_doc.flags.email_sent:
 			user_doc.send_welcome_mail_to_user()
+		return ""
 	except Exception:
+		# Remove the message that frappe.throw() already wrote to the log
+		# before raising — prevents a raw red popup reaching the browser.
+		frappe.clear_last_message()
 		frappe.log_error(
 			frappe.get_traceback(),
-			f"LMS: Failed to send welcome email to {email}",
+			f"LMS: Welcome email blocked for {email}",
 		)
+		return "Welcome email could not be sent."
 
 
 def _get_friendly_error(raw_error):

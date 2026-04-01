@@ -11,7 +11,16 @@ from frappe.model.document import Document
 
 class LMSBatchEnrollment(Document):
 	def after_insert(self):
-		send_confirmation_email(self)
+		try:
+			send_confirmation_email(self)
+		except Exception:
+			# Confirmation email is optional — do not let a blocked/failed email
+			# unwind the enrollment insert or pollute _server_messages.
+			frappe.clear_last_message()
+			frappe.log_error(
+				frappe.get_traceback(),
+				f"LMS: Confirmation email not sent for enrollment {self.name}",
+			)
 		self.add_member_to_live_class()
 
 	def validate(self):

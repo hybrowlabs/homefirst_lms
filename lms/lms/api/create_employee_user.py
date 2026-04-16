@@ -9,19 +9,24 @@ from frappe import _
 
 @frappe.whitelist()
 def create_users_for_employees(employee_list):
-	"""Create Frappe/ERPNext users for a list of employees who do not yet have one.
+	"""Create LMS Website Users for a list of employees who do not yet have one.
+
+	Creates the User directly (not via ERPNext's create_user) so we can:
+	  - guarantee send_welcome_email = 0 (no duplicate welcome mail)
+	  - set user_type = "Website User" from the start (LMS-only access)
+	  - avoid Employee.save() which would add the Employee role back
 
 	Handles three cases cleanly:
 	  1. User created fresh and linked to employee.
-	  2. User already existed (e.g. from a partial previous attempt) — linked now.
+	  2. User already existed — linked now, roles corrected.
 	  3. Genuine failure (invalid email, permission error, etc.) — friendly message.
 
 	Returns:
 	  dict with keys:
-	    created  – list of {employee, user, email} for newly created + linked users
-	    linked   – list of {employee, user, email} for already-existing users now linked
-	    skipped  – list of {employee, reason} for employees correctly skipped
-	    failed   – list of {employee, email, error} for unrecoverable failures
+	    created  – list of {employee, user, email, email_note}
+	    linked   – list of {employee, user, email, email_note}
+	    skipped  – list of {employee, reason}
+	    failed   – list of {employee, email, error}
 	"""
 	if isinstance(employee_list, str):
 		employee_list = json.loads(employee_list)
@@ -32,19 +37,6 @@ def create_users_for_employees(employee_list):
 	allowed_roles = {"System Manager", "Moderator", "HR Manager"}
 	if not allowed_roles & set(frappe.get_roles(frappe.session.user)):
 		frappe.throw(_("You do not have permission to create users for employees."))
-
-	# Resolve the ERPNext create_user function from the same Python environment.
-	try:
-		erpnext_create_user = frappe.get_attr(
-			"erpnext.setup.doctype.employee.employee.create_user"
-		)
-	except (ImportError, AttributeError):
-		frappe.throw(
-			_(
-				"ERPNext is not installed in this bench. "
-				"The create_user function could not be found."
-			)
-		)
 
 	created = []
 	linked = []
@@ -87,32 +79,38 @@ def create_users_for_employees(employee_list):
 
 		# --- Attempt user creation ---
 		try:
-			erpnext_create_user(employee=emp_name, email=email)
+			_create_lms_user_doc(employee, email)
 
-			# Re-fetch to confirm user_id was set by ERPNext's create_user
-			updated_user_id = frappe.db.get_value("Employee", emp_name, "user_id") or email
+			# Link employee → user directly (no emp.save() which would add Employee role)
+			frappe.db.set_value("Employee", emp_name, "user_id", email)
+			frappe.db.commit()
 
-			# Ensure employee.user_id is actually persisted
-			if not frappe.db.get_value("Employee", emp_name, "user_id"):
-				frappe.db.set_value("Employee", emp_name, "user_id", email)
-				frappe.db.commit()
-
+			# Send exactly one welcome email
 			email_note = _send_welcome_email_safe(email)
-			created.append({"employee": emp_name, "user": updated_user_id, "email": email, "email_note": email_note})
+			created.append(
+				{"employee": emp_name, "user": email, "email": email, "email_note": email_note}
+			)
 
 		except Exception as exc:
 			# --- Recovery: check if user was actually created despite the exception ---
-			# This handles the common case where user insertion succeeded but a
-			# post-insert step (e.g. welcome email to a restricted domain) raised
-			# an error, leaving employee.user_id unlinked on the first attempt.
+			# This handles the case where user insertion succeeded but a post-insert
+			# step (e.g. email to a restricted domain) raised an error.
 			existing_user = frappe.db.get_value("User", {"email": email}, "name")
 			if existing_user:
-				# User exists — link the employee now and report as "linked"
+				# User exists — fix their roles/type, link the employee, report as "linked"
 				if not frappe.db.get_value("Employee", emp_name, "user_id"):
 					frappe.db.set_value("Employee", emp_name, "user_id", existing_user)
 					frappe.db.commit()
-				email_note = _send_welcome_email_safe(email)
-				linked.append({"employee": emp_name, "user": existing_user, "email": email, "email_note": email_note})
+				_make_lms_website_user(existing_user)
+				email_note = _send_welcome_email_safe(existing_user)
+				linked.append(
+					{
+						"employee": emp_name,
+						"user": existing_user,
+						"email": email,
+						"email_note": email_note,
+					}
+				)
 			else:
 				# Genuine failure — surface a friendly message, log technical detail
 				raw = str(exc)
@@ -136,28 +134,87 @@ def create_users_for_employees(employee_list):
 # ---------------------------------------------------------------------------
 
 
+def _create_lms_user_doc(employee, email):
+	"""Create a Frappe User for LMS access from an Employee record.
+
+	- user_type is set to "Website User" (no Desk access)
+	- send_welcome_email = 0 + flags.no_welcome_mail = True prevents any
+	  automatic welcome email from Frappe/ERPNext; caller sends one explicitly
+	- The LMS after_insert hook (lms.lms.user.after_insert) adds the
+	  "LMS Student" role automatically
+	- Employee is linked via frappe.db.set_value (not emp.save()) so that
+	  ERPNext's update_user() is never triggered (which would add the Employee
+	  role back and change user_type to "System User")
+	"""
+	name_parts = (employee.employee_name or "").split()
+	first_name = name_parts[0] if name_parts else email.split("@")[0]
+	last_name = " ".join(name_parts[1:]) if len(name_parts) > 1 else ""
+
+	user = frappe.new_doc("User")
+	user.email = email
+	user.first_name = first_name
+	user.last_name = last_name
+	user.enabled = 1
+	user.user_type = "Website User"  # set before insert so check_roles_added() in
+	# validate() sees user_type != "System User" and skips the "No Roles Specified" popup
+	user.send_welcome_email = 0  # never auto-send — caller decides
+	user.flags.no_welcome_mail = True  # belt-and-suspenders for Frappe's own check
+	user.flags.ignore_permissions = True
+	user.insert()
+	# NOTE: LMS after_insert hook fires here → adds "LMS Student" role → user.save()
+	# That save has in_insert=True but send_welcome_email=0, so no email is sent.
+
+
+def _make_lms_website_user(user_name):
+	"""Correct an existing user's type and roles for LMS-only access.
+
+	Called for the recovery path (user already existed before this run).
+	Removes Desk-access roles (Employee, Employee Self Service) that ERPNext
+	may have added, keeps/adds LMS Student, and lets Frappe recalculate
+	user_type as "Website User" automatically.
+	"""
+	DESK_ROLES_TO_REMOVE = {"Employee", "Employee Self Service"}
+
+	try:
+		user = frappe.get_doc("User", user_name)
+		user.flags.ignore_permissions = True
+		user.flags.no_welcome_mail = True
+
+		# Remove Desk-access roles that do not belong on an LMS intern
+		user.roles = [r for r in user.roles if r.role not in DESK_ROLES_TO_REMOVE]
+
+		# Ensure LMS Student role is present
+		existing_roles = {r.role for r in user.roles}
+		if "LMS Student" not in existing_roles:
+			user.append("roles", {"role": "LMS Student"})
+
+		# Frappe's validate → set_system_user() will see no desk_access=1 roles
+		# and automatically set user_type = "Website User"
+		user.save()
+	except Exception:
+		frappe.log_error(
+			frappe.get_traceback(),
+			f"LMS: Could not convert {user_name} to Website User",
+		)
+
+
 def _send_welcome_email_safe(email):
 	"""Send welcome / account-setup email to the given user.
 
-	Uses Frappe's built-in reset_password flow so the user receives a
-	secure link to complete their registration. Failures are logged only —
-	the user record and employee link are never rolled back because of an
-	email problem.
+	Uses Frappe's built-in send_welcome_mail_to_user so the user receives a
+	secure link to set their password. Failures are logged only — the user
+	record and employee link are never rolled back because of an email problem.
 
-	Returns an empty string on success, or a clean one-line warning string
-	when the email could not be sent (to surface in the UI result dialog).
-	Also calls frappe.clear_last_message() so that a blocked-email
-	frappe.throw() does not pollute _server_messages with a raw red popup.
+	Returns an empty string on success, or a short warning string when the
+	email could not be sent (to surface inline in the UI result dialog).
+	Calls frappe.clear_last_message() so that a blocked-email frappe.throw()
+	does not pollute _server_messages with a raw red popup.
 	"""
 	try:
 		user_doc = frappe.get_doc("User", email)
-		# Only send if not already sent during creation
-		if not user_doc.flags.email_sent:
-			user_doc.send_welcome_mail_to_user()
+		user_doc.send_welcome_mail_to_user()
 		return ""
 	except Exception:
-		# Remove the message that frappe.throw() already wrote to the log
-		# before raising — prevents a raw red popup reaching the browser.
 		frappe.clear_last_message()
 		frappe.log_error(
 			frappe.get_traceback(),
@@ -178,5 +235,4 @@ def _get_friendly_error(raw_error):
 		return "A user with this email already exists."
 	if "permission" in low:
 		return "Insufficient permissions to create this user. Contact your system administrator."
-	# Generic fallback — keep technical details out of UI, they're in the log
 	return "User could not be created. Please check the server error log for details."

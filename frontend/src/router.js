@@ -290,6 +290,22 @@ router.beforeEach(async (to, from, next) => {
 		isLoggedIn = false
 	}
 
+	// Block Website Users (LMS Students) from job-openings and statistics pages.
+	// These users are identified by user_type === 'Website User'.
+	// Internal / admin users are System Users and remain unaffected.
+	if (isLoggedIn && userResource.data?.user_type === 'Website User') {
+		const studentBlockedRoutes = [
+			'Jobs',
+			'JobDetail',
+			'JobApplications',
+			'JobForm',
+			'Statistics',
+		]
+		if (studentBlockedRoutes.includes(to.name)) {
+			return next({ name: 'Courses' })
+		}
+	}
+
 	if (!isLoggedIn) {
 		if (to.name == 'Home') router.push({ name: 'Courses' })
 

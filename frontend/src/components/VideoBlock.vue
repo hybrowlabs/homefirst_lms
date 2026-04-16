@@ -210,13 +210,16 @@ const updateCurrentTime = () => {
 			duration.value = videoRef.value.duration
 		}
 		// Authoritative anti-skip enforcement at the video-element level.
-		// Fires for every seek — slider, keyboard, programmatic, or otherwise.
+		// Fires for keyboard shortcuts, native controls, and programmatic seeks.
+		// The slider is handled separately by changeCurrentTime().
 		videoRef.value.onseeking = () => {
 			if (
 				settings.data?.prevent_skipping_videos &&
 				videoRef.value.currentTime > maxWatchedTime.value
 			) {
+				// Snap both the video and the slider to the watched boundary.
 				videoRef.value.currentTime = maxWatchedTime.value
+				currentTime.value = maxWatchedTime.value
 			}
 		}
 		videoRef.value.ontimeupdate = () => {
@@ -324,13 +327,13 @@ const toggleMute = () => {
 }
 
 const changeCurrentTime = () => {
-	// UI-level first pass: snap the slider back immediately for visual feedback
-	// before onseeking fires. onseeking is the authoritative enforcement layer.
 	if (
 		settings.data?.prevent_skipping_videos &&
 		currentTime.value > maxWatchedTime.value
 	) {
-		currentTime.value = videoRef.value.currentTime
+		// Snap slider back to the exact watched boundary (stable target).
+		// Do NOT seek the video — it stays at the current play position.
+		currentTime.value = maxWatchedTime.value
 		return
 	}
 	videoRef.value.currentTime = currentTime.value

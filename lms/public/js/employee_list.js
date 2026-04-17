@@ -96,7 +96,7 @@ function _show_create_user_result(created, linked, skipped, failed) {
 		html += `<div class="mb-3">
 			<b style="color:green">✔ Created and linked (${created.length})</b>
 			<ul class="mt-1">
-				${created.map((r) => `<li>${r.employee} — ${r.email}</li>`).join("")}
+				${created.map((r) => `<li>${r.employee} — ${r.email}${r.email_note ? ` <span style="color:orange;font-size:0.9em">(${r.email_note})</span>` : ''}</li>`).join("")}
 			</ul>
 		</div>`;
 	}
@@ -105,7 +105,7 @@ function _show_create_user_result(created, linked, skipped, failed) {
 		html += `<div class="mb-3">
 			<b style="color:#2d8a4e">✔ Already existed — now linked (${linked.length})</b>
 			<ul class="mt-1">
-				${linked.map((r) => `<li>${r.employee} — ${r.email}</li>`).join("")}
+				${linked.map((r) => `<li>${r.employee} — ${r.email}${r.email_note ? ` <span style="color:orange;font-size:0.9em">(${r.email_note})</span>` : ''}</li>`).join("")}
 			</ul>
 		</div>`;
 	}

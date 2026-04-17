@@ -498,12 +498,16 @@ const getSidebarItems = () => {
 					icon: 'Briefcase',
 					to: 'Jobs',
 					activeFor: ['Jobs', 'JobDetail'],
+					condition: () =>
+						userResource?.data?.user_type !== 'Website User',
 				},
 				{
 					label: 'Statistics',
 					icon: 'TrendingUp',
 					to: 'Statistics',
 					activeFor: ['Statistics'],
+					condition: () =>
+						userResource?.data?.user_type !== 'Website User',
 				},
 				{
 					label: 'Contact Us',

@@ -31,7 +31,7 @@
 						doctype="User"
 						:label="__('Instructors')"
 						:filters="{ ignore_user_type: 1 }"
-						:onCreate="(close: () => void) => openSettings('Members', close)"
+						:onCreate="(close: () => void) => createNewMember(close)"
 						:required="true"
 					/>
 					<Uploader
@@ -76,7 +76,7 @@
 <script setup lang="ts">
 import { Button, Dialog, FormControl, TextEditor, toast } from 'frappe-ui'
 import { Link, useOnboarding, useTelemetry } from 'frappe-ui/frappe'
-import { inject, onMounted, onBeforeUnmount, ref, watch } from 'vue'
+import { inject, onMounted, onBeforeUnmount, ref, watch, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { openSettings } from '@/utils'
 import MultiSelect from '@/components/Controls/MultiSelect.vue'
@@ -150,7 +150,32 @@ onBeforeUnmount(() => {
 	window.removeEventListener('keydown', keyboardShortcut)
 })
 
-watch(show, () => {
-	capture('course_form_opened')
+const creatingMember = ref(false)
+
+const emptyCourseDraft = () => ({
+	title: '',
+	short_introduction: '',
+	description: '',
+	instructors: [],
+	category: null,
+	image: null,
+})
+
+const createNewMember = (closePopover: () => void) => {
+	creatingMember.value = true
+	closePopover()
+	show.value = false
+	openSettings('Members')
+}
+
+watch(show, (val) => {
+	if (val) {
+		creatingMember.value = false
+		capture('course_form_opened')
+	} else if (!creatingMember.value) {
+		nextTick(() => {
+			course.value = emptyCourseDraft()
+		})
+	}
 })
 </script>

@@ -114,7 +114,7 @@
 		</div>
 	</div>
 	<NewCourseModal
-		v-if="showCourseModal"
+		v-show="showCourseModal"
 		v-model="showCourseModal"
 		:courses="courses"
 	/>

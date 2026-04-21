@@ -68,6 +68,19 @@ export class Markdown {
 		const clipboardData = event.clipboardData || window.clipboardData
 		if (!clipboardData) return
 
+		// Handle Microsoft Word / Excel clipboard HTML before falling through to
+		// existing markdown logic. Word/Excel put content in text/html with mso-
+		// namespaces; EditorJS's default paste handler mangles or drops it.
+		const htmlData = clipboardData.getData('text/html')
+		if (htmlData && this._isMicrosoftHtml(htmlData)) {
+			event.preventDefault()
+			event.stopPropagation()
+			event.stopImmediatePropagation()
+			const plainText = clipboardData.getData('text/plain')
+			this._insertMicrosoftContentAsBlocks(htmlData, plainText)
+			return
+		}
+
 		const pastedText = clipboardData.getData('text/plain')
 
 		if (pastedText && this._looksLikeMarkdown(pastedText)) {
@@ -77,6 +90,132 @@ export class Markdown {
 
 			this._insertMarkdownAsBlocks(pastedText)
 		}
+	}
+
+	_isMicrosoftHtml(html) {
+		return (
+			html.includes('xmlns:o=') ||
+			html.includes('xmlns:w=') ||
+			html.includes('xmlns:x=') ||
+			html.includes('mso-') ||
+			/class="?Mso/.test(html) ||
+			html.includes('<!--[if')
+		)
+	}
+
+	_parseMicrosoftHtmlToBlocks(html) {
+		const parser = new DOMParser()
+		const doc = parser.parseFromString(html, 'text/html')
+
+		doc.querySelectorAll('script, style, xml, meta').forEach((el) =>
+			el.remove()
+		)
+
+		const blocks = []
+
+		const processNode = (node) => {
+			if (node.nodeType !== Node.ELEMENT_NODE) return
+			const tag = node.tagName.toLowerCase()
+
+			if (/^h[1-6]$/.test(tag)) {
+				const text = node.textContent.trim()
+				if (text)
+					blocks.push({
+						type: 'header',
+						data: { text, level: parseInt(tag[1]) },
+					})
+				return
+			}
+
+			if (tag === 'p') {
+				const text = node.textContent.trim()
+				if (text) blocks.push({ type: 'markdown', data: { text } })
+				return
+			}
+
+			if (tag === 'ul') {
+				const items = Array.from(node.querySelectorAll(':scope > li'))
+					.map((li) => ({
+						content: li.textContent.trim(),
+						items: [],
+					}))
+					.filter((item) => item.content)
+				if (items.length)
+					blocks.push({
+						type: 'list',
+						data: { style: 'unordered', items },
+					})
+				return
+			}
+
+			if (tag === 'ol') {
+				const items = Array.from(node.querySelectorAll(':scope > li'))
+					.map((li) => ({
+						content: li.textContent.trim(),
+						items: [],
+					}))
+					.filter((item) => item.content)
+				if (items.length)
+					blocks.push({
+						type: 'list',
+						data: { style: 'ordered', items },
+					})
+				return
+			}
+
+			if (tag === 'table') {
+				Array.from(node.querySelectorAll('tr')).forEach((row) => {
+					const text = Array.from(row.querySelectorAll('td, th'))
+						.map((cell) => cell.textContent.trim())
+						.filter(Boolean)
+						.join('\t')
+					if (text) blocks.push({ type: 'markdown', data: { text } })
+				})
+				return
+			}
+
+			// Recurse into divs and other wrapper elements
+			Array.from(node.children).forEach(processNode)
+		}
+
+		Array.from(doc.body.children).forEach(processNode)
+		return blocks
+	}
+
+	async _insertMicrosoftContentAsBlocks(html, plainText) {
+		const blocks = this._parseMicrosoftHtmlToBlocks(html)
+
+		// Fall back to plain-text path (which handles markdown) if HTML yielded nothing
+		if (blocks.length === 0) {
+			if (plainText) this._insertMarkdownAsBlocks(plainText)
+			return
+		}
+
+		const currentIndex = this.api.blocks.getCurrentBlockIndex()
+
+		for (let i = 0; i < blocks.length; i++) {
+			try {
+				await this.api.blocks.insert(
+					blocks[i].type,
+					blocks[i].data,
+					{},
+					currentIndex + i,
+					false
+				)
+			} catch (error) {
+				console.error('Failed to insert block:', blocks[i], error)
+			}
+		}
+
+		try {
+			await this.api.blocks.delete(currentIndex + blocks.length)
+		} catch (error) {
+			console.error('Failed to delete original block:', error)
+		}
+
+		setTimeout(() => {
+			this.api.caret.setToBlock(currentIndex, 'end')
+		}, 100)
 	}
 
 	_looksLikeMarkdown(text) {

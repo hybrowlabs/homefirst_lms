@@ -151,6 +151,7 @@ fixtures = [
 	"LMS Category",
 	{"dt": "Role", "filters": [["name", "=", "LMS Intern"]]},
 	{"dt": "Property Setter", "filters": [["doc_type", "=", "Employee"], ["field_name", "=", "date_of_birth"]]},
+	{"dt": "Email Template", "filters": [["name", "=", "LMS Welcome Email"]]},
 ]
 
 # Testing

@@ -1,0 +1,9 @@
+[
+	{
+		"doctype": "Email Template",
+		"name": "LMS Welcome Email",
+		"subject": "Welcome to HomeFirst Finance Company India Limited",
+		"use_html": 1,
+		"response_html": "<p><strong>Welcome to HomeFirst Finance Company India Limited</strong></p>\n\n<p>Hello {{ first_name }},</p>\n\n<p>Your account has been created successfully.<br>\nLogin ID: <strong>{{ user }}</strong></p>\n\n<p>Click below to complete your registration and set your password.</p>\n\n<p style=\"text-align:center; margin:20px 0;\">\n  <a href=\"{{ link }}\" style=\"display:inline-block; padding:10px 18px; background-color:#0b5cab; color:#ffffff; text-decoration:none; border-radius:4px; font-weight:600;\">\n    Complete Registration\n  </a>\n</p>\n\n<p>If you're unable to reset your password, use \"Login with Email\" here:<br>\n<a href=\"https://homefirst-prod.m.frappe.cloud\">https://homefirst-prod.m.frappe.cloud</a>\n</p>"
+	}
+]

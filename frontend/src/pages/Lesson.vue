@@ -893,13 +893,7 @@ const updateVideoTime = (video) => {
 const startTimer = () => {
 	if (!lesson.data?.membership) return
 	if (lessonComplete.value) return
-	// Only skip the timer for lessons that use the dedicated YouTube URL field
-	// (lesson.data.youtube is set). EditorJS content lessons whose embed block
-	// happens to have service "youtube" share the same icon but must still use
-	// the timer — their YouTube iframe is not a native <video> element, so
-	// checkAndMarkProgress() will correctly take the no-video branch.
-	if (lesson.data?.icon === 'icon-youtube' && lesson.data?.youtube) return
-	const requiredSeconds = (lesson.data?.completion_time_minutes || 1) * 60
+	const requiredSeconds = computeRequiredSeconds()
 	timerInterval = setInterval(() => {
 		timer.value++
 		if (timer.value >= requiredSeconds) {
@@ -908,6 +902,78 @@ const startTimer = () => {
 			checkAndMarkProgress()
 		}
 	}, 1000)
+}
+
+// Content-aware completion delay.
+//
+// Uploaded video  → short reading-time timer; the real gate is the 90%-watch
+//                   requirement enforced by checkAndMarkProgress().
+// Uploaded audio  → no DOM-level audio gate exists, so the timer is the sole
+//                   guard; use max(reading_time, AUDIO_MIN_SECS).
+// YouTube / embed → playback is not trackable; use EXTERNAL_VIDEO_MIN_SECS floor.
+// Text / image    → reading-time delay (word_count / 200 wpm), capped 5–30 s.
+const READING_WPM = 200
+const TEXT_MIN_SECS = 5
+const TEXT_MAX_SECS = 30
+const EXTERNAL_VIDEO_MIN_SECS = 60
+const AUDIO_MIN_SECS = 30
+
+const computeRequiredSeconds = () => {
+	let blocks = []
+	if (lesson.data?.content) {
+		try {
+			blocks = JSON.parse(lesson.data.content)?.blocks || []
+		} catch (e) {
+			/* ignore malformed content */
+		}
+	}
+
+	const hasVideoBlock = blocks.some((b) => b.type === 'video')
+	const hasAudioBlock = blocks.some((b) => b.type === 'audio')
+	const hasYouTubeField = !!(lesson.data?.youtube)
+	const hasEmbedBlock = blocks.some((b) => b.type === 'embed')
+
+	const wordCount = extractWordCount(blocks)
+	const readingSecs = Math.max(
+		TEXT_MIN_SECS,
+		Math.min(TEXT_MAX_SECS, Math.round((wordCount / READING_WPM) * 60))
+	)
+
+	// Uploaded video: checkAndMarkProgress() already enforces the 90%-watch gate;
+	// set the timer to reading time only so mixed text+video does not stall.
+	if (hasVideoBlock) return readingSecs
+
+	// Uploaded audio: timer is the only gate.
+	if (hasAudioBlock) return Math.max(readingSecs, AUDIO_MIN_SECS)
+
+	// YouTube URL field or EditorJS embed block: playback cannot be tracked.
+	if (hasYouTubeField || hasEmbedBlock) return Math.max(readingSecs, EXTERNAL_VIDEO_MIN_SECS)
+
+	// Text-only / image-only: pure reading-time delay.
+	return readingSecs
+}
+
+const extractWordCount = (blocks) => {
+	const raw = blocks
+		.map((block) => {
+			if (['paragraph', 'header', 'markdown'].includes(block.type)) {
+				return (block.data?.text || '').replace(/<[^>]+>/g, ' ')
+			}
+			if (block.type === 'list') {
+				return (block.data?.items || [])
+					.map((item) =>
+						typeof item === 'string'
+							? item.replace(/<[^>]+>/g, ' ')
+							: (item.content || '').replace(/<[^>]+>/g, ' ')
+					)
+					.join(' ')
+			}
+			if (block.type === 'codeBox') return block.data?.code || ''
+			return ''
+		})
+		.join(' ')
+		.trim()
+	return raw ? raw.split(/\s+/).filter((w) => w.length > 0).length : 0
 }
 
 onBeforeUnmount(() => {

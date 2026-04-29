@@ -289,7 +289,9 @@ const newSubmission = createResource({
 			assignment: props.assignmentID,
 			member: user.data?.name,
 		}
-		if (!showUploader()) {
+		if (showUploader()) {
+			doc.assignment_attachment = submissionResource.doc?.assignment_attachment || null
+		} else {
 			doc.answer = answer.value
 		}
 		return {
@@ -408,6 +410,9 @@ const addNewSubmission = () => {
 
 const saveSubmission = (file) => {
 	isDirty.value = true
+	if (!submissionResource.doc) {
+		submissionResource.doc = {}
+	}
 	submissionResource.doc.assignment_attachment = file.file_url
 }
 
@@ -439,6 +444,8 @@ const getType = () => {
 		]
 	} else if (type == 'PDF') {
 		return ['.pdf']
+	} else if (type == 'PPT') {
+		return ['.ppt', '.pptx']
 	}
 }
 
@@ -454,6 +461,8 @@ const validateFile = (file) => {
 		return 'Only document file is allowed.'
 	} else if (type == 'PDF' && !['pdf'].includes(extension)) {
 		return 'Only PDF file is allowed.'
+	} else if (type == 'PPT' && !['ppt', 'pptx'].includes(extension)) {
+		return 'Only PPT/PPTX file is allowed.'
 	}
 }
 
@@ -473,6 +482,7 @@ const canGradeSubmission = computed(() => {
 })
 
 const canModifyAssignment = computed(() => {
+	if (props.submissionName === 'new') return true
 	return (
 		!submissionResource.doc ||
 		(submissionResource.doc?.owner == user.data?.name &&
@@ -501,6 +511,6 @@ const statusTheme = computed(() => {
 })
 
 const showUploader = () => {
-	return ['PDF', 'Image', 'Document'].includes(assignment.data?.type)
+	return ['PDF', 'Image', 'Document', 'PPT'].includes(assignment.data?.type)
 }
 </script>

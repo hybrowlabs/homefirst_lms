@@ -32,12 +32,12 @@
 					).format(quiz.data.passing_percentage)
 				}}
 			</div>
-			<div v-if="quiz.data.max_attempts" class="leading-5">
+			<div v-if="quiz.data.max_attempts" class="leading-5">				
 				{{
 					__('You can attempt this quiz {0}.').format(
 						quiz.data.max_attempts == 1
 							? '1 time'
-							: ${quiz.data.max_attempts} times
+							: `${quiz.data.max_attempts} times`
 					)
 				}}
 			</div>
@@ -126,7 +126,7 @@
 					></div>
 					<div v-if="questionDetails.data.type == 'Choices'" v-for="index in 4">
 						<label
-							v-if="questionDetails.data[option_${index}]"
+							v-if="questionDetails.data[`option_${index}`]"
 							class="flex items-center bg-surface-gray-3 rounded-md p-3 mt-4 w-full cursor-pointer focus:border-blue-600"
 						>
 							<input
@@ -166,16 +166,16 @@
 							</div>
 							<span
 								class="ml-2 text-ink-gray-9"
-								v-html="questionDetails.data[option_${index}]"
+								v-html="questionDetails.data[`option_${index}`]"
 							>
 							</span>
 						</label>
 						<div
-							v-if="questionDetails.data[explanation_${index}]"
+							v-if="questionDetails.data[`explanation_${index}`]"
 							class="mt-2 text-xs text-ink-gray-7"
 							v-show="showAnswers.length"
 						>
-							{{ questionDetails.data[explanation_${index}] }}
+							{{ questionDetails.data[`explanation_${index}`] }}
 						</div>
 					</div>
 					<div v-else-if="questionDetails.data.type == 'User Input'">
@@ -374,14 +374,13 @@ const quiz = createResource({
 
 const populateQuestions = () => {
 	let data = quiz.data
-	if (data.shuffle_questions) {
-		questions = shuffleArray(data.questions)
-		if (data.limit_questions_to) {
-			questions = questions.slice(0, data.limit_questions_to)
-		}
-	} else {
-		questions = data.questions
+	let list = data.shuffle_questions
+		? shuffleArray([...data.questions])
+		: [...data.questions]
+	if (data.limit_questions_to) {
+		list = list.slice(0, data.limit_questions_to)
 	}
+	questions = list
 }
 
 const setupTimer = () => {
@@ -408,7 +407,7 @@ const formatTimer = (seconds) => {
 		.toString()
 		.padStart(2, '0')
 	const secs = (seconds % 60).toString().padStart(2, '0')
-	return hrs != '00' ? ${hrs}:${mins}:${secs} : ${mins}:${secs}
+	return hrs != '00' ? `${hrs}:${mins}:${secs}` : `${mins}:${secs}`
 }
 
 const timerProgress = computed(() => {
@@ -485,7 +484,7 @@ const questionDetails = createResource({
 
 watch(activeQuestion, (value) => {
 	if (value > 0) {
-		currentQuestion.value = quiz.data.questions[value - 1].question
+		currentQuestion.value = questions[value - 1].question
 		questionDetails.reload()
 	}
 })
@@ -518,7 +517,7 @@ const getAnswers = () => {
 	if (type == 'Choices') {
 		selectedOptions.forEach((value, index) => {
 			if (selectedOptions[index])
-				answers.push(questionDetails.data[option_${index + 1}])
+				answers.push(questionDetails.data[`option_${index + 1}`])
 		})
 	} else {
 		answers.push(possibleAnswer.value)
@@ -598,7 +597,7 @@ const nextQuestion = () => {
 }
 
 const resetQuestion = () => {
-	if (activeQuestion.value == quiz.data.questions.length) return
+	if (activeQuestion.value == questions.length) return
 	activeQuestion.value = activeQuestion.value + 1
 	selectedOptions.splice(0, selectedOptions.length, ...[0, 0, 0, 0])
 	showAnswers.length = 0

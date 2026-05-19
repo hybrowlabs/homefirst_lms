@@ -45,20 +45,49 @@ export class Assignment {
 	renderAssignment(assignment) {
 		if (this.readOnly) {
 			const { userResource } = usersStore()
-			call('frappe.client.get_value', {
-				doctype: 'LMS Assignment Submission',
-				filters: {
-					assignment: assignment,
-					member: userResource.data?.name,
-				},
-				fieldname: ['name'],
-			}).then((data) => {
-				let submission = data.name || 'new'
-				const submissionPath = getLmsRoute(
-					`assignment-submission/${assignment}/${submission}?fromLesson=1`
-				)
-				this.wrapper.innerHTML = `<iframe src="${submissionPath}" class="w-full h-[500px]"></iframe>`
-			})
+
+			// Resolve the current member's identifier. If userResource hasn't
+			// loaded yet, fall back to frappe.session.user from the global
+			// Frappe context. Never call get_value with an undefined member —
+			// the filter would silently drop and the backend would return
+			// some other user's submission (LIMIT 1), leaking files across
+			// employees.
+			const memberName =
+				userResource.data?.name ||
+				(typeof frappe !== 'undefined' ? frappe.session?.user : null)
+
+			const loadSubmissionFor = (member) => {
+				call('frappe.client.get_value', {
+					doctype: 'LMS Assignment Submission',
+					filters: {
+						assignment: assignment,
+						member: member,
+					},
+					fieldname: ['name'],
+				}).then((data) => {
+					let submission = data.name || 'new'
+					const submissionPath = getLmsRoute(
+						`assignment-submission/${assignment}/${submission}?fromLesson=1`
+					)
+					this.wrapper.innerHTML = `<iframe src="${submissionPath}" class="w-full h-[500px]"></iframe>`
+				})
+			}
+
+			if (memberName) {
+				loadSubmissionFor(memberName)
+			} else if (userResource.fetch) {
+				// User not loaded yet — fetch first, then render
+				this.wrapper.innerHTML = `<div class="p-3 text-sm text-ink-gray-5">${__('Loading…')}</div>`
+				userResource.fetch().then(() => {
+					if (userResource.data?.name) {
+						loadSubmissionFor(userResource.data.name)
+					} else {
+						this.wrapper.innerHTML = `<div class="p-3 text-sm text-ink-gray-5">${__('Please log in to view this assignment.')}</div>`
+					}
+				})
+			} else {
+				this.wrapper.innerHTML = `<div class="p-3 text-sm text-ink-gray-5">${__('Please log in to view this assignment.')}</div>`
+			}
 			return
 		}
 		call('frappe.client.get_value', {

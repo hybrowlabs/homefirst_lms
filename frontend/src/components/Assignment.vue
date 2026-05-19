@@ -55,7 +55,9 @@
 					v-if="
 						submissionName != 'new' &&
 						!['Pass', 'Fail'].includes(submissionResource.doc?.status) &&
-						submissionResource.doc?.owner == user.data?.name
+						submissionResource.doc?.owner == user.data?.name &&
+						(submissionResource.doc?.assignment_attachment ||
+							submissionResource.doc?.answer)
 					"
 					class="bg-surface-blue-2 text-ink-blue-2 p-3 rounded-md leading-5 text-sm"
 				>

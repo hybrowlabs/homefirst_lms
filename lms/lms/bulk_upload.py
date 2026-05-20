@@ -254,6 +254,21 @@ def _create_lesson(title, chapter, course, content):
 	)
 	lesson.insert(ignore_permissions=True)
 
+	# Link all uploaded files in content to this lesson so Frappe doesn't auto-delete them
+	try:
+		content_data = json.loads(content)
+		for block in content_data.get("blocks", []):
+			if block.get("type") == "upload" and block.get("data", {}).get("file_url"):
+				file_url = block["data"]["file_url"]
+				file_doc = frappe.db.get_value("File", {"file_url": file_url}, "name")
+				if file_doc:
+					frappe.db.set_value("File", file_doc, {
+						"attached_to_doctype": "Course Lesson",
+						"attached_to_name": lesson.name,
+					})
+	except Exception:
+		pass  # Don't block lesson creation if file linking fails
+
 	ref = frappe.new_doc("Lesson Reference")
 	ref.update(
 		{
@@ -496,6 +511,15 @@ def append_file_to_lesson(course, lesson_name, file_url, file_name):
 		content_data["time"] = int(frappe.utils.now_datetime().timestamp() * 1000)
 		lesson.content = json.dumps(content_data)
 		lesson.save(ignore_permissions=True)
+
+		# Link uploaded file to this lesson so Frappe doesn't auto-delete it
+		file_doc = frappe.db.get_value("File", {"file_url": file_url}, "name")
+		if file_doc:
+			frappe.db.set_value("File", file_doc, {
+				"attached_to_doctype": "Course Lesson",
+				"attached_to_name": lesson_name,
+			})
+
 		frappe.db.commit()
 		return {"status": "Done", "lesson_name": lesson_name}
 	except Exception:

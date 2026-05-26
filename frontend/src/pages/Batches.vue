@@ -161,6 +161,7 @@ const currentCategory = ref(null)
 const title = ref('')
 const certification = ref(false)
 const filters = ref({})
+const orFilters = ref({})
 const is_student = computed(() => user.data?.is_student)
 const currentTab = ref(is_student.value ? 'all' : 'upcoming')
 const orderBy = ref('start_date')
@@ -205,10 +206,16 @@ const setCategories = (data) => {
 
 const updateBatches = () => {
 	updateFilters()
-	batches.update({
+	const updateArgs = {
 		filters: filters.value,
 		orderBy: orderBy.value,
-	})
+	}
+	// Archived tab: match either manually archived (custom_is_archived=1)
+	// OR auto-archived (end_date passed). Other tabs do not need or_filters.
+	if (orFilters.value && Object.keys(orFilters.value).length > 0) {
+		updateArgs.or_filters = orFilters.value
+	}
+	batches.update(updateArgs)
 	batches.reload().then((data) => {
 		setCategories(data)
 	})
@@ -249,6 +256,8 @@ const updateCertificationFilter = () => {
 
 const updateTabFilter = () => {
 	orderBy.value = 'start_date'
+	// Reset or_filters on every tab change — archived is the only tab that uses it
+	orFilters.value = {}
 	if (!user.data) {
 		return
 	}
@@ -262,13 +271,20 @@ const updateTabFilter = () => {
 	} else {
 		delete filters.value['start_date']
 		delete filters.value['published']
+		delete filters.value['end_date']
 		orderBy.value = 'start_date desc'
 		if (currentTab.value == 'upcoming') {
 			filters.value['start_date'] = ['>=', dayjs().format('YYYY-MM-DD')]
 			filters.value['published'] = 1
 			orderBy.value = 'start_date'
 		} else if (currentTab.value == 'archived') {
-			filters.value['start_date'] = ['<=', dayjs().format('YYYY-MM-DD')]
+			// Match either manually archived OR auto-archived (end_date passed).
+			// `end_date` is not set as an AND filter here so that batches
+			// without an end_date can still show up via custom_is_archived.
+			orFilters.value = {
+				custom_is_archived: 1,
+				end_date: ['<=', dayjs().format('YYYY-MM-DD')],
+			}
 		} else if (currentTab.value == 'unpublished') {
 			filters.value['published'] = 0
 		}
@@ -276,9 +292,14 @@ const updateTabFilter = () => {
 }
 
 const updateStudentFilter = () => {
-	if (!user.data || (is_student.value && currentTab.value != 'enrolled')) {
+	if (!user.data) {
 		filters.value['start_date'] = ['>=', dayjs().format('YYYY-MM-DD')]
 		filters.value['published'] = 1
+	} else if (is_student.value && currentTab.value != 'enrolled') {
+		// Hide completed batches (end_date passed) for students
+		filters.value['published'] = 1
+		delete filters.value['start_date']
+		filters.value['end_date'] = ['>=', dayjs().format('YYYY-MM-DD')]
 	}
 }
 

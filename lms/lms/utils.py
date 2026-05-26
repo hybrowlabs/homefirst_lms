@@ -1424,10 +1424,19 @@ def categorize_batches(batches):
 	for batch in batches:
 		if not batch.published:
 			private.append(batch)
-		elif getdate(batch.start_date) < getdate():
+		elif batch.get("custom_is_archived"):
+			# Manually archived by admin (custom_ prefix because the field
+			# was added via Customize Form which auto-prefixes the fieldname)
 			archived.append(batch)
+		elif batch.end_date and getdate(batch.end_date) < getdate():
+			# Auto archived — end_date passed
+			archived.append(batch)
+		elif getdate(batch.start_date) < getdate() and (not batch.end_date or getdate(batch.end_date) >= getdate()):
+			# Started but not ended — still active, show in upcoming
+			upcoming.append(batch)
 		elif getdate(batch.start_date) == getdate() and get_time_str(batch.start_time) < nowtime():
-			archived.append(batch)
+			# Started today and time passed — still active
+			upcoming.append(batch)
 		else:
 			upcoming.append(batch)
 
@@ -2447,7 +2456,7 @@ def validate_program_enrollment(program):
 
 @frappe.whitelist(allow_guest=True)
 @rate_limit(limit=500, seconds=60 * 60)
-def get_batches(filters=None, start=0, order_by="start_date"):
+def get_batches(filters=None, or_filters=None, start=0, order_by="start_date"):
 	if not guest_access_allowed():
 		return []
 
@@ -2464,6 +2473,7 @@ def get_batches(filters=None, start=0, order_by="start_date"):
 	batches = frappe.get_all(
 		"LMS Batch",
 		filters=filters,
+		or_filters=or_filters,
 		fields=[
 			"name",
 			"title",
@@ -2480,6 +2490,7 @@ def get_batches(filters=None, start=0, order_by="start_date"):
 			"timezone",
 			"published",
 			"category",
+			"custom_is_archived",
 		],
 		order_by=order_by,
 		start=start,

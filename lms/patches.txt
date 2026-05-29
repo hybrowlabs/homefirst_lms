@@ -118,3 +118,4 @@ lms.patches.v2_0.open_to_opportunities
 lms.patches.v2_0.open_to_work
 lms.patches.v2_0.fix_assignment_submission_owner
 lms.patches.v2_0.set_welcome_email_template
+lms.patches.v2_0.backfill_submission_member_context

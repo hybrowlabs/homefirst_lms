@@ -14,6 +14,10 @@ GRADED_STATUSES = ("Pass", "Fail", "Not Applicable")
 
 
 class LMSAssignmentSubmission(Document):
+	def before_insert(self):
+		from lms.lms.utils import autofill_member_context
+		autofill_member_context(self)
+
 	def validate(self):
 		self.validate_duplicates()
 		self.validate_url()

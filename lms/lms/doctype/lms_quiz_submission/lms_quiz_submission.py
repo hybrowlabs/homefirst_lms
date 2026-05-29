@@ -9,6 +9,10 @@ from frappe.utils import cint
 
 
 class LMSQuizSubmission(Document):
+	def before_insert(self):
+		from lms.lms.utils import autofill_member_context
+		autofill_member_context(self)
+
 	def validate(self):
 		self.validate_if_max_attempts_exceeded()
 		self.validate_marks()

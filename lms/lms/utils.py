@@ -2658,3 +2658,63 @@ def can_modify_batch(batch):
 	if not (has_moderator_role() or is_instructor):
 		return False
 	return True
+
+
+def autofill_member_context(doc):
+	"""
+	Auto-populate organizational context fields on LMS Quiz Submission and
+	LMS Assignment Submission, based on the submitter (doc.member).
+
+	Fields filled (only if empty AND the doctype defines the field):
+	  - custom_employee         ← Employee where user_id = doc.member
+	  - custom_branch           ← Employee.branch
+	  - custom_region           ← Employee.custom_region
+	  - custom_reports_to       ← Employee.reports_to
+	  - custom_manager_email_id ← Employee.custom_manager_email_id
+	  - custom_batch            ← most recent LMS Batch Enrollment for member
+
+	Safely no-ops if any prerequisite is missing.
+	"""
+	member = getattr(doc, "member", None)
+	if not member:
+		return
+
+	employee = frappe.db.get_value(
+		"Employee",
+		{"user_id": member},
+		[
+			"name",
+			"branch",
+			"reports_to",
+			"custom_region",
+			"custom_manager_email_id",
+		],
+		as_dict=True,
+	)
+
+	if employee:
+		_set_if_empty(doc, "custom_employee", employee.name)
+		_set_if_empty(doc, "custom_branch", employee.branch)
+		_set_if_empty(doc, "custom_region", employee.custom_region)
+		_set_if_empty(doc, "custom_reports_to", employee.reports_to)
+		_set_if_empty(doc, "custom_manager_email_id", employee.custom_manager_email_id)
+
+	batch = frappe.db.get_value(
+		"LMS Batch Enrollment",
+		{"member": member},
+		"batch",
+		order_by="creation desc",
+	)
+	if batch:
+		_set_if_empty(doc, "custom_batch", batch)
+
+
+def _set_if_empty(doc, fieldname, value):
+	"""Set field only if value is truthy, doctype has the field, and field is empty."""
+	if not value:
+		return
+	if not doc.meta.has_field(fieldname):
+		return
+	if doc.get(fieldname):
+		return
+	doc.set(fieldname, value)

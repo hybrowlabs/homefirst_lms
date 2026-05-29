@@ -145,7 +145,31 @@ scheduler_events = {
 }
 
 fixtures = [
-	"Custom Field",
+	{
+		"dt": "Custom Field",
+		"filters": [
+			[
+				"name",
+				"in",
+				[
+					# LMS Quiz Submission — organizational context fields
+					"LMS Quiz Submission-custom_batch",
+					"LMS Quiz Submission-custom_employee",
+					"LMS Quiz Submission-custom_branch",
+					"LMS Quiz Submission-custom_region",
+					"LMS Quiz Submission-custom_reports_to",
+					"LMS Quiz Submission-custom_manager_email_id",
+					# LMS Assignment Submission — organizational context fields
+					"LMS Assignment Submission-custom_batch",
+					"LMS Assignment Submission-custom_employee",
+					"LMS Assignment Submission-custom_branch",
+					"LMS Assignment Submission-custom_region",
+					"LMS Assignment Submission-custom_reports_to",
+					"LMS Assignment Submission-custom_manager_email_id",
+				],
+			]
+		],
+	},
 	"Function",
 	"Industry",
 	"LMS Category",

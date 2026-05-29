@@ -82,7 +82,7 @@
 						v-if="!submissionResource.doc?.assignment_attachment && canModifyAssignment"
 						:fileTypes="getType()"
 						:uploadArgs="{
-							private: true,
+							private: assignment.data?.type !== 'PPT',
 						}"
 						:validateFile="validateFile"
 						@success="(file) => saveSubmission(file)"
@@ -103,7 +103,7 @@
 							class="flex items-center text-ink-gray-7"
 						>
 							<a
-								:href="submissionResource.doc.assignment_attachment"
+								:href="getAttachmentViewUrl(submissionResource.doc.assignment_attachment)"
 								target="_blank"
 								class="cursor-pointer !no-underline text-sm leading-5"
 							>
@@ -514,5 +514,20 @@ const statusTheme = computed(() => {
 
 const showUploader = () => {
 	return ['PDF', 'Image', 'Document', 'PPT'].includes(assignment.data?.type)
+}
+
+// PPT files browsers natively download instead of preview. Wrap public PPT
+// uploads in Microsoft's free Office Online Viewer so the slides render in
+// the new tab instead. Requires the file URL to be publicly reachable
+// (uploadArgs.private=false for PPT) and HTTPS in production.
+const getAttachmentViewUrl = (file_url) => {
+	if (!file_url) return file_url
+	if (assignment.data?.type === 'PPT') {
+		const absoluteUrl = file_url.startsWith('http')
+			? file_url
+			: window.location.origin + file_url
+		return `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(absoluteUrl)}`
+	}
+	return file_url
 }
 </script>

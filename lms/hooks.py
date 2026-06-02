@@ -152,6 +152,8 @@ fixtures = [
 				"name",
 				"in",
 				[
+					# LMS Batch — archive flag used by get_batches + bulk archive UI
+					"LMS Batch-custom_is_archived",
 					# LMS Quiz Submission — organizational context fields
 					"LMS Quiz Submission-custom_batch",
 					"LMS Quiz Submission-custom_employee",

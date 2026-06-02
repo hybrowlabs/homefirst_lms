@@ -148,19 +148,20 @@
 				:key="batch.name"
 				class="relative"
 			>
-				<div
+				<label
 					v-if="canShowBulkActions || canShowBulkUnarchive"
-					class="absolute top-2 left-2 z-10"
-					@click.stop.prevent
+					class="absolute top-2 left-2 z-20 flex items-center justify-center w-6 h-6 bg-surface-white rounded border border-outline-gray-3 cursor-pointer hover:bg-surface-gray-2"
+					@click.stop
 				>
 					<input
 						type="checkbox"
 						:checked="selectedBatches.has(batch.name)"
+						@click.stop
 						@change="toggleBatchSelection(batch.name)"
 						class="h-4 w-4 cursor-pointer accent-ink-gray-9"
 						:aria-label="__('Select') + ' ' + batch.title"
 					/>
-				</div>
+				</label>
 				<router-link
 					:to="{ name: 'BatchDetail', params: { batchName: batch.name } }"
 				>
@@ -318,9 +319,11 @@ const setCategories = (data) => {
 
 const updateBatches = () => {
 	updateFilters()
+	const hasOrFilters =
+		orFilters.value && Object.keys(orFilters.value).length > 0
 	batches.update({
-		filters: filters.value,
-		or_filters: orFilters.value,
+		filters: { ...filters.value },
+		or_filters: hasOrFilters ? { ...orFilters.value } : null,
 		orderBy: orderBy.value,
 	})
 	batches.reload().then((data) => {

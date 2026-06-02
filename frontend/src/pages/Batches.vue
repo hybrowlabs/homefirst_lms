@@ -111,15 +111,62 @@
 			</div>
 		</div>
 		<div
+			v-if="(canShowBulkActions || canShowBulkUnarchive) && selectedBatches.size > 0"
+			class="flex items-center justify-between mb-4 px-3 py-2 bg-surface-gray-2 rounded-md"
+		>
+			<div class="text-sm text-ink-gray-7">
+				{{ selectedBatches.size }} {{ __('selected') }}
+			</div>
+			<div class="flex items-center space-x-2">
+				<Button @click="clearSelection" :disabled="isArchiving">
+					{{ __('Clear') }}
+				</Button>
+				<Button
+					v-if="canShowBulkActions"
+					variant="solid"
+					@click="archiveSelected"
+					:loading="isArchiving"
+				>
+					{{ __('Archive Selected') }}
+				</Button>
+				<Button
+					v-if="canShowBulkUnarchive"
+					variant="solid"
+					@click="unarchiveSelected"
+					:loading="isArchiving"
+				>
+					{{ __('Unarchive Selected') }}
+				</Button>
+			</div>
+		</div>
+		<div
 			v-if="batches.data?.length"
 			class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5"
 		>
-			<router-link
+			<div
 				v-for="batch in batches.data"
-				:to="{ name: 'BatchDetail', params: { batchName: batch.name } }"
+				:key="batch.name"
+				class="relative"
 			>
-				<BatchCard :batch="batch" />
-			</router-link>
+				<div
+					v-if="canShowBulkActions || canShowBulkUnarchive"
+					class="absolute top-2 left-2 z-10"
+					@click.stop.prevent
+				>
+					<input
+						type="checkbox"
+						:checked="selectedBatches.has(batch.name)"
+						@change="toggleBatchSelection(batch.name)"
+						class="h-4 w-4 cursor-pointer accent-ink-gray-9"
+						:aria-label="__('Select') + ' ' + batch.title"
+					/>
+				</div>
+				<router-link
+					:to="{ name: 'BatchDetail', params: { batchName: batch.name } }"
+				>
+					<BatchCard :batch="batch" />
+				</router-link>
+			</div>
 		</div>
 		<EmptyState v-else-if="!batches.list.loading" type="Batches" />
 
@@ -137,6 +184,7 @@
 import {
 	Breadcrumbs,
 	Button,
+	call,
 	createListResource,
 	Dropdown,
 	FormControl,
@@ -167,6 +215,70 @@ const currentTab = ref(is_student.value ? 'all' : 'upcoming')
 const orderBy = ref('start_date')
 const readOnlyMode = window.read_only_mode
 const router = useRouter()
+
+const selectedBatches = ref(new Set())
+const isArchiving = ref(false)
+
+const isModerator = computed(
+	() =>
+		user.data?.is_moderator ||
+		user.data?.is_instructor ||
+		user.data?.is_evaluator
+)
+
+const canShowBulkActions = computed(
+	() => isModerator.value && currentTab.value !== 'archived'
+)
+
+const canShowBulkUnarchive = computed(
+	() => isModerator.value && currentTab.value === 'archived'
+)
+
+const toggleBatchSelection = (name) => {
+	const next = new Set(selectedBatches.value)
+	if (next.has(name)) {
+		next.delete(name)
+	} else {
+		next.add(name)
+	}
+	selectedBatches.value = next
+}
+
+const clearSelection = () => {
+	selectedBatches.value = new Set()
+}
+
+const archiveSelected = async () => {
+	if (selectedBatches.value.size === 0 || isArchiving.value) return
+	isArchiving.value = true
+	try {
+		await call('lms.lms.api.batch_actions.archive_batches', {
+			batch_names: Array.from(selectedBatches.value),
+		})
+		clearSelection()
+		updateBatches()
+	} catch (e) {
+		console.error('Archive failed:', e)
+	} finally {
+		isArchiving.value = false
+	}
+}
+
+const unarchiveSelected = async () => {
+	if (selectedBatches.value.size === 0 || isArchiving.value) return
+	isArchiving.value = true
+	try {
+		await call('lms.lms.api.batch_actions.unarchive_batches', {
+			batch_names: Array.from(selectedBatches.value),
+		})
+		clearSelection()
+		updateBatches()
+	} catch (e) {
+		console.error('Unarchive failed:', e)
+	} finally {
+		isArchiving.value = false
+	}
+}
 
 onMounted(() => {
 	setFiltersFromQuery()
@@ -206,16 +318,11 @@ const setCategories = (data) => {
 
 const updateBatches = () => {
 	updateFilters()
-	const updateArgs = {
+	batches.update({
 		filters: filters.value,
+		or_filters: orFilters.value,
 		orderBy: orderBy.value,
-	}
-	// Archived tab: match either manually archived (custom_is_archived=1)
-	// OR auto-archived (end_date passed). Other tabs do not need or_filters.
-	if (orFilters.value && Object.keys(orFilters.value).length > 0) {
-		updateArgs.or_filters = orFilters.value
-	}
-	batches.update(updateArgs)
+	})
 	batches.reload().then((data) => {
 		setCategories(data)
 	})
@@ -340,6 +447,7 @@ const updateCategories = (data) => {
 }
 
 watch(currentTab, () => {
+	clearSelection()
 	updateBatches()
 })
 

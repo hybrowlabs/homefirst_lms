@@ -112,7 +112,12 @@ def get_submissions_for_evaluation(batch=None, quiz=None):
 		as_dict=True,
 	)
 
-	# Get batch members, then filter submissions on (member, quiz)
+	# Get batch members, then filter submissions on (member, quiz, batch).
+	#
+	# custom_batch is required in the filter because a member can be enrolled
+	# in multiple batches. Without it, a submission a member made while in
+	# batch A would also surface when querying batch B if the same member is
+	# now enrolled in batch B.
 	members = frappe.get_all(
 		"LMS Batch Enrollment",
 		filters={"batch": batch},
@@ -123,7 +128,11 @@ def get_submissions_for_evaluation(batch=None, quiz=None):
 	if members:
 		submission_names = frappe.get_all(
 			"LMS Quiz Submission",
-			filters={"quiz": quiz, "member": ["in", members]},
+			filters={
+				"quiz": quiz,
+				"member": ["in", members],
+				"custom_batch": batch,
+			},
 			pluck="name",
 			order_by="creation desc",
 		)

@@ -93,16 +93,13 @@ def get_submissions_for_evaluation(batch=None, quiz=None):
 			frappe.ValidationError,
 		)
 
-	if not frappe.db.exists("LMS Batch", batch):
-		frappe.throw(
-			_("LMS Batch '{0}' not found.").format(batch),
-			frappe.DoesNotExistError,
-		)
-	if not frappe.db.exists("LMS Quiz", quiz):
-		frappe.throw(
-			_("LMS Quiz '{0}' not found.").format(quiz),
-			frappe.DoesNotExistError,
-		)
+	# Resolve `batch` and `quiz` — accept either the doctype `name`
+	# (slug, e.g. "batch-04-doj-04-may-2026-2") or the human `title`
+	# (e.g. "Batch 04 | DOJ: 04 May 2026"). If a title is passed and it
+	# is ambiguous (multiple batches share the same title), we throw so
+	# the caller can pick the exact name.
+	batch = _resolve_by_name_or_title("LMS Batch", batch)
+	quiz = _resolve_by_name_or_title("LMS Quiz", quiz)
 
 	# Pull quiz metadata once
 	quiz_doc = frappe.db.get_value(
@@ -147,6 +144,71 @@ def get_submissions_for_evaluation(batch=None, quiz=None):
 		"total_marks": (quiz_doc and quiz_doc.total_marks) or 0,
 		"count": len(submissions),
 		"submissions": submissions,
+	}
+
+
+def _resolve_by_name_or_title(doctype, value):
+	"""
+	Accept either the doctype `name` (slug) or the human `title` and
+	return the resolved `name`. Throws if missing or if a title resolves
+	to more than one record.
+	"""
+	if not value:
+		frappe.throw(
+			_("{0} value is empty.").format(doctype),
+			frappe.ValidationError,
+		)
+
+	# Fast path: exact name match
+	if frappe.db.exists(doctype, value):
+		return value
+
+	# Fall back to title lookup
+	matches = frappe.get_all(doctype, filters={"title": value}, pluck="name")
+	if not matches:
+		frappe.throw(
+			_("{0} '{1}' not found (matched neither name nor title).").format(doctype, value),
+			frappe.DoesNotExistError,
+		)
+	if len(matches) > 1:
+		frappe.throw(
+			_("{0} title '{1}' is ambiguous — matches {2} records: {3}. "
+			  "Please pass the exact name instead.").format(
+				doctype, value, len(matches), ", ".join(matches)
+			),
+			frappe.ValidationError,
+		)
+	return matches[0]
+
+
+@frappe.whitelist()
+def list_batches_and_quizzes():
+	"""
+	Return the list of batches and quizzes available for the dropdowns
+	on the Django evaluation UI. Each entry returns both `name` (the
+	stable slug to pass back to get_submissions_for_evaluation) and
+	`title` (the human label to show in the dropdown).
+
+	Returns:
+		{
+		  "batches": [{ "name": "...", "title": "..." }, ...],
+		  "quizzes": [{ "name": "...", "title": "..." }, ...]
+		}
+	"""
+	_check_permission()
+	return {
+		"batches": frappe.get_all(
+			"LMS Batch",
+			fields=["name", "title"],
+			order_by="creation desc",
+			limit_page_length=200,
+		),
+		"quizzes": frappe.get_all(
+			"LMS Quiz",
+			fields=["name", "title"],
+			order_by="creation desc",
+			limit_page_length=200,
+		),
 	}
 
 

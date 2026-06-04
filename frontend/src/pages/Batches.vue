@@ -382,21 +382,26 @@ const updateTabFilter = () => {
 		delete filters.value['start_date']
 		delete filters.value['published']
 		delete filters.value['end_date']
+		delete filters.value['custom_is_archived']
 		orderBy.value = 'start_date desc'
 		if (currentTab.value == 'upcoming') {
 			filters.value['start_date'] = ['>=', dayjs().format('YYYY-MM-DD')]
 			filters.value['published'] = 1
+			filters.value['custom_is_archived'] = 0
 			orderBy.value = 'start_date'
 		} else if (currentTab.value == 'archived') {
-			// Match either manually archived OR auto-archived (end_date passed).
-			// `end_date` is not set as an AND filter here so that batches
-			// without an end_date can still show up via custom_is_archived.
-			orFilters.value = {
-				custom_is_archived: 1,
-				end_date: ['<=', dayjs().format('YYYY-MM-DD')],
-			}
+			// Manual-archive only: a batch appears in this tab solely when an
+			// admin has flipped custom_is_archived to 1 (via the bulk-archive
+			// button). Batches with a past end_date are NOT auto-archived
+			// any more — they continue to live in the All tab until someone
+			// explicitly archives them.
+			filters.value['custom_is_archived'] = 1
 		} else if (currentTab.value == 'unpublished') {
 			filters.value['published'] = 0
+			filters.value['custom_is_archived'] = 0
+		} else {
+			// "all" tab — show everything EXCEPT archived
+			filters.value['custom_is_archived'] = 0
 		}
 	}
 }

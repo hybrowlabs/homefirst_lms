@@ -258,6 +258,26 @@ onMounted(() => {
 	}
 })
 
+// Defense-in-depth: if the component is reused across assignmentIDs (e.g. router
+// reuses the same component instance when only params change), reset stale state
+// from the previous assignment so an uploaded file from Week 1 does not leak
+// into Week 2's submission form. The parent now passes :key, but this watch
+// guarantees correctness even if a future caller forgets it.
+watch(
+	() => [props.assignmentID, props.submissionName],
+	() => {
+		answer.value = null
+		comments.value = null
+		isDirty.value = false
+		if (submissionResource.doc) {
+			submissionResource.doc = null
+		}
+		if (props.submissionName !== 'new') {
+			submissionResource.reload()
+		}
+	}
+)
+
 const keyboardShortcut = (e) => {
 	if (e.key === 's' && (e.ctrlKey || e.metaKey)) {
 		submitAssignment()

@@ -10,7 +10,8 @@ __pycache__/
 *$py.class
 node_modules
 package-lock.json
-lms/public/frontend
+# lms/public/frontend  ← Temporarily commented: ship pre-built assets so
+# Frappe Cloud serves the latest bundle without depending on its own build step.
 lms/www/lms.html
-lms/www/_lms.html
+# lms/www/_lms.html  ← Same reason — entry HTML must ship with assets.
 frappe-ui

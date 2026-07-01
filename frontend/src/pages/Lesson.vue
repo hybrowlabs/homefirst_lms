@@ -472,6 +472,12 @@ const timerCompleted = ref(false)
 let timerInterval
 let videoListenerElement = null
 let videoListenerHandler = null
+// Periodic + pause + tab-close savers for video watch_time. Without these the
+// only path that persists progress is onBeforeUnmount, which does not fire on
+// tab close, browser crash, or network loss — so a paused viewer who closes
+// the tab loses everything since the last lesson switch.
+let progressSaveInterval = null
+let videoPauseListeners = []
 
 const tabs = ref([
 	{
@@ -517,6 +523,14 @@ onMounted(() => {
 	document.addEventListener('lms:video-ninety-percent', handleVideoNinetyPercent)
 	document.addEventListener('lms:quiz-completed', handleQuizCompleted)
 	socket.on('update_lesson_progress', onLessonProgressUpdate)
+	// Persist watch_time every 15s while the lesson is open. trackVideoWatchDuration
+	// short-circuits when no <video>/Plyr source is on the page, so this is a cheap
+	// no-op for text-only lessons.
+	progressSaveInterval = setInterval(() => {
+		trackVideoWatchDuration()
+	}, 15000)
+	window.addEventListener('beforeunload', handleBeforeUnload)
+	document.addEventListener('visibilitychange', handleVisibilityChange)
 })
 
 const attachVideoNinetyPercentListener = () => {
@@ -557,9 +571,18 @@ onBeforeUnmount(() => {
 	document.removeEventListener('fullscreenchange', attachFullscreenEvent)
 	document.removeEventListener('lms:video-ninety-percent', handleVideoNinetyPercent)
 	document.removeEventListener('lms:quiz-completed', handleQuizCompleted)
+	window.removeEventListener('beforeunload', handleBeforeUnload)
+	document.removeEventListener('visibilitychange', handleVisibilityChange)
 	socket.off('update_lesson_progress', onLessonProgressUpdate)
 	sidebarStore.isSidebarCollapsed = false
-	trackVideoWatchDuration()
+	if (progressSaveInterval) {
+		clearInterval(progressSaveInterval)
+		progressSaveInterval = null
+	}
+	detachVideoPauseListeners()
+	// Beacon over async call — onBeforeUnmount during route change can have
+	// the in-flight fetch aborted before the request reaches the server.
+	saveVideoProgressBeacon()
 	if (videoListenerElement && videoListenerHandler) {
 		videoListenerElement.removeEventListener('timeupdate', videoListenerHandler)
 		videoListenerHandler = null
@@ -780,13 +803,86 @@ const resetLessonState = (newChapterNumber, newLessonNumber) => {
 }
 
 const trackVideoWatchDuration = () => {
-	if (!lesson.data.membership) return
+	if (!lesson.data?.membership) return
 	let videoDetails = getVideoDetails()
 	videoDetails = videoDetails.concat(getPlyrSourceDetails())
+	if (!videoDetails.length) return
 	call('lms.lms.api.track_video_watch_duration', {
 		lesson: lesson.data.name,
 		videos: videoDetails,
 	})
+}
+
+// Tab-close / page-hide save. Uses sendBeacon (queued by the browser before
+// unload, unlike fetch which the browser can cancel). The CSRF token is
+// posted as a form field — Frappe accepts it there when the header form
+// is unavailable, which sendBeacon does not let us set.
+const saveVideoProgressBeacon = () => {
+	if (!lesson.data?.membership) return
+	let videoDetails = getVideoDetails()
+	videoDetails = videoDetails.concat(getPlyrSourceDetails())
+	if (!videoDetails.length) return
+	try {
+		const formData = new FormData()
+		formData.append('lesson', lesson.data.name)
+		formData.append('videos', JSON.stringify(videoDetails))
+		if (window.csrf_token) formData.append('csrf_token', window.csrf_token)
+		const url = '/api/method/lms.lms.api.track_video_watch_duration'
+		const sent =
+			navigator.sendBeacon && navigator.sendBeacon(url, formData)
+		if (!sent) {
+			fetch(url, {
+				method: 'POST',
+				body: formData,
+				keepalive: true,
+				credentials: 'include',
+				headers: { 'X-Frappe-CSRF-Token': window.csrf_token || '' },
+			})
+		}
+	} catch (e) {
+		// best-effort; nothing useful to do if the browser is tearing down
+	}
+}
+
+const attachVideoPauseListeners = () => {
+	detachVideoPauseListeners()
+	document.querySelectorAll('video').forEach((video) => {
+		const handler = () => trackVideoWatchDuration()
+		video.addEventListener('pause', handler)
+		videoPauseListeners.push({ kind: 'native', el: video, handler })
+	})
+	plyrSources.value.forEach((source) => {
+		const handler = () => trackVideoWatchDuration()
+		try {
+			source.on('pause', handler)
+			videoPauseListeners.push({ kind: 'plyr', src: source, handler })
+		} catch (e) {
+			// some Plyr embeds (e.g. before 'ready') may not accept handlers yet
+		}
+	})
+}
+
+const detachVideoPauseListeners = () => {
+	videoPauseListeners.forEach((item) => {
+		try {
+			if (item.kind === 'native') {
+				item.el.removeEventListener('pause', item.handler)
+			} else if (item.kind === 'plyr') {
+				item.src.off?.('pause', item.handler)
+			}
+		} catch (e) {}
+	})
+	videoPauseListeners = []
+}
+
+const handleVisibilityChange = () => {
+	if (document.visibilityState === 'hidden') {
+		saveVideoProgressBeacon()
+	}
+}
+
+const handleBeforeUnload = () => {
+	saveVideoProgressBeacon()
 }
 
 const getVideoDetails = () => {
@@ -856,6 +952,11 @@ const updateVideoWatchDuration = () => {
 			}
 		})
 	}
+	// Attach pause listeners after videos are present in the DOM so a single
+	// pause persists progress immediately. Without this the user could pause,
+	// switch tabs, and lose seconds-to-minutes of position until the next
+	// 15s interval or page leave.
+	attachVideoPauseListeners()
 }
 
 const updatePlyrVideoTime = (video) => {

@@ -213,6 +213,22 @@ const updateCurrentTime = () => {
 		// Fires for keyboard shortcuts, native controls, and programmatic seeks.
 		// The slider is handled separately by changeCurrentTime().
 		videoRef.value.onseeking = () => {
+			// Resume-from-saved-position: Lesson.vue tags the element with
+			// data-resume-watch-time before seeking to the last watch_time.
+			// Adopt that value as maxWatchedTime so the anti-skip guard
+			// doesn't snap the resume back to 0. One-shot — the attribute
+			// is cleared so subsequent (user-initiated) seeks fall through
+			// to the normal guard below.
+			const resumeAttr = videoRef.value.dataset.resumeWatchTime
+			if (resumeAttr) {
+				const resumeTime = parseFloat(resumeAttr)
+				if (resumeTime > 0 && maxWatchedTime.value < resumeTime) {
+					maxWatchedTime.value = resumeTime
+					currentTime.value = resumeTime
+				}
+				delete videoRef.value.dataset.resumeWatchTime
+				return
+			}
 			if (
 				settings.data?.prevent_skipping_videos &&
 				videoRef.value.currentTime > maxWatchedTime.value

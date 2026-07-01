@@ -987,6 +987,15 @@ const updateVideoTime = (video) => {
 		videos.forEach((vid) => {
 			if (vid.src === video.source) {
 				let watch_time = video.watch_time < vid.duration ? video.watch_time : 0
+				// Signal to VideoBlock's onseeking / anti-skip guard that this
+				// seek is a resume from saved progress — VideoBlock reads the
+				// attribute and adopts it as maxWatchedTime so the guard
+				// doesn't snap the resume back to 0 (which was the reason
+				// videos always restarted from the beginning even after
+				// track_video_watch_duration had stored the correct value).
+				if (watch_time > 0) {
+					vid.dataset.resumeWatchTime = String(watch_time)
+				}
 				if (vid.readyState >= 1) {
 					vid.currentTime = watch_time
 				} else {

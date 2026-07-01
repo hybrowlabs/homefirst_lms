@@ -212,7 +212,19 @@ const certification = ref(false)
 const filters = ref({})
 const orFilters = ref({})
 const is_student = computed(() => user.data?.is_student)
-const currentTab = ref(is_student.value ? 'all' : 'upcoming')
+// Website Users should only see their Enrolled batches — never the
+// global All list. Default tab adjusts so the page lands on a tab
+// that actually shows them content.
+const is_website_user = computed(
+	() => user.data?.user_type === 'Website User'
+)
+const currentTab = ref(
+	is_website_user.value
+		? 'enrolled'
+		: is_student.value
+		? 'all'
+		: 'upcoming'
+)
 const orderBy = ref('start_date')
 const readOnlyMode = window.read_only_mode
 const router = useRouter()
@@ -460,6 +472,13 @@ watch(currentTab, () => {
 })
 
 const batchTabs = computed(() => {
+	// Website Users only get the Enrolled tab. The "All" tab and the
+	// moderator-only Upcoming/Archived/Unpublished tabs are hidden so
+	// they never see batches outside their own enrollments.
+	if (is_website_user.value) {
+		return [{ label: __('Enrolled'), value: 'enrolled' }]
+	}
+
 	let tabs = [
 		{
 			label: __('All'),

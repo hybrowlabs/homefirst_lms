@@ -590,6 +590,49 @@ onBeforeUnmount(() => {
 	}
 })
 
+// CSRFTokenError auto-recovery. Frappe Cloud impersonation switches the
+// session cookie without reloading the tab, but the service worker had
+// already cached the pre-impersonation HTML — so window.csrf_token stays
+// bound to the admin's expired session and every save 400s with
+// CSRFTokenError. The user then sees the video always restart from 0
+// because the watch_time was never persisted.
+//
+// On the first CSRF-flavoured failure we unregister the SW, wipe caches,
+// and reload once. The reloaded HTML is served fresh with the impersonated
+// user's csrf_token and subsequent saves succeed. sessionStorage guards
+// against a reload loop if the token is fundamentally broken.
+// Declared with `function` so both the resource below (which references
+// it) and trackVideoWatchDuration (which references it later) see the
+// same hoisted binding.
+async function handleCsrfErrorAndRecover(err) {
+	const msg = String(
+		(err && (err.message || err.exc || err.error || err._server_messages)) || err || ''
+	)
+	if (
+		!msg.includes('CSRFTokenError') &&
+		!msg.includes('CSRF Token') &&
+		!msg.includes('csrf')
+	) {
+		return
+	}
+	const key = 'lms_csrf_recovery_attempted'
+	if (sessionStorage.getItem(key)) return
+	sessionStorage.setItem(key, '1')
+	try {
+		if ('serviceWorker' in navigator) {
+			const regs = await navigator.serviceWorker.getRegistrations()
+			await Promise.all(regs.map((r) => r.unregister()))
+		}
+		if ('caches' in window) {
+			const names = await caches.keys()
+			await Promise.all(names.map((n) => caches.delete(n)))
+		}
+	} catch (e) {
+		// Best-effort cleanup — proceed to reload even if it fails.
+	}
+	window.location.reload()
+}
+
 const lesson = createResource({
 	url: 'lms.lms.utils.get_lesson',
 	makeParams(values) {
@@ -600,6 +643,11 @@ const lesson = createResource({
 		}
 	},
 	auto: true,
+	// If get_lesson itself CSRF-errors (typically the very first API call
+	// after impersonation) we hit the same recovery path — unregister the
+	// service worker, drop caches, and reload so the fresh HTML rebinds
+	// window.csrf_token to the impersonated session.
+	onError: handleCsrfErrorAndRecover,
 })
 
 const setupLesson = async (data) => {
@@ -810,8 +858,9 @@ const trackVideoWatchDuration = () => {
 	call('lms.lms.api.track_video_watch_duration', {
 		lesson: lesson.data.name,
 		videos: videoDetails,
-	})
+	}).catch(handleCsrfErrorAndRecover)
 }
+
 
 // Tab-close / page-hide save. Uses sendBeacon (queued by the browser before
 // unload, unlike fetch which the browser can cancel). The CSRF token is

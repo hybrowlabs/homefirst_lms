@@ -1,2 +1,0 @@
-import{B as r,y as l,b1 as s,a_ as u}from"./index-qskExYxX.js";function o(t,n){if(t)return t;let e=n??"button";if(typeof e=="string"&&e.toLowerCase()==="button")return"button"}function i(t,n){let e=r(o(t.value.type,t.value.as));return l(()=>{e.value=o(t.value.type,t.value.as)}),s(()=>{var a;e.value||u(n)&&u(n)instanceof HTMLButtonElement&&!((a=u(n))!=null&&a.hasAttribute("type"))&&(e.value="button")}),e}export{i as s};
-//# sourceMappingURL=use-resolve-button-type-D3fZX25T.js.map

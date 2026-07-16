@@ -34,7 +34,12 @@ export class Assignment {
 
 	render() {
 		this.wrapper = document.createElement('div')
-		if (Object.keys(this.data).length) {
+		// Only render a live assignment when a concrete assignment ref exists.
+		// Object.keys(this.data).length was true even for {assignment: ""}, which
+		// let renderAssignment("") run and query submissions with an undefined
+		// assignment filter — Frappe drops that filter and returns the member's
+		// first submission (LIMIT 1), leaking Week 1's file into Week 2.
+		if (this.data.assignment) {
 			this.renderAssignment(this.data.assignment)
 		} else {
 			this.renderAssignmentModal()
@@ -43,6 +48,14 @@ export class Assignment {
 	}
 
 	renderAssignment(assignment) {
+		// Guard: never resolve a submission without a concrete assignment.
+		// An empty/undefined assignment filter is silently dropped by the
+		// backend, returning some other submission (LIMIT 1) for this member
+		// and leaking files across weeks.
+		if (!assignment) {
+			this.wrapper.innerHTML = `<div class="p-3 text-sm text-ink-gray-5">${__('This assignment is no longer available.')}</div>`
+			return
+		}
 		if (this.readOnly) {
 			const { userResource } = usersStore()
 

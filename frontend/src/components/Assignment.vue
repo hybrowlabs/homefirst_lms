@@ -231,6 +231,12 @@ const comments = ref(null)
 const router = useRouter()
 const user = inject('$user')
 const isDirty = ref(false)
+// True until the user uploads a file in THIS form. While true, any
+// assignment_attachment appearing on a NEW submission's doc is treated as leaked
+// state from a previous assignment (the cached name:'new' document resource can
+// carry it over) and is cleared — so Week N's file never shows in, or saves onto,
+// Week N+1's submission.
+const uploadedThisForm = ref(false)
 
 const props = defineProps({
 	assignmentID: {
@@ -258,6 +264,22 @@ onMounted(() => {
 	}
 })
 
+// A brand-new submission must start with NO file. The submission is a
+// createDocumentResource keyed on name:'new', so its cached doc can still hold the
+// previous assignment's uploaded file — and the :key remount means the watch below
+// (which only fires on prop change) never runs for it. This guard clears any
+// attachment that appears on a new submission's doc until the user actually uploads
+// here, covering both a value already present at mount and one loaded async from cache.
+watch(
+	() => submissionResource.doc?.assignment_attachment,
+	(val) => {
+		if (props.submissionName === 'new' && !uploadedThisForm.value && val) {
+			submissionResource.doc.assignment_attachment = null
+		}
+	},
+	{ immediate: true }
+)
+
 // Defense-in-depth: if the component is reused across assignmentIDs (e.g. router
 // reuses the same component instance when only params change), reset stale state
 // from the previous assignment so an uploaded file from Week 1 does not leak
@@ -266,6 +288,7 @@ onMounted(() => {
 watch(
 	() => [props.assignmentID, props.submissionName],
 	() => {
+		uploadedThisForm.value = false
 		answer.value = null
 		comments.value = null
 		isDirty.value = false
@@ -432,6 +455,9 @@ const addNewSubmission = () => {
 
 const saveSubmission = (file) => {
 	isDirty.value = true
+	// The user intentionally uploaded here, so from now on the attachment on this
+	// doc is real (not leaked) and must NOT be cleared by the stale-attachment guard.
+	uploadedThisForm.value = true
 	if (!submissionResource.doc) {
 		submissionResource.doc = {}
 	}

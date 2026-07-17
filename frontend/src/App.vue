@@ -1,7 +1,18 @@
 <template>
 	<FrappeUIProvider>
 		<Layout class="isolate text-base">
-			<router-view />
+			<!-- Routes flagged with meta.remountOnParamChange (e.g. LessonForm) are
+			     keyed by fullPath so switching between two lessons on the same route
+			     remounts the component — a fresh editor + fresh fetch per lesson.
+			     Without this, EditorJS state from the previous lesson bled into (and
+			     autosaved onto) the next one. All other routes keep the default
+			     no-key behaviour. -->
+			<router-view v-slot="{ Component, route }">
+				<component
+					:is="Component"
+					:key="route.meta.remountOnParamChange ? route.fullPath : undefined"
+				/>
+			</router-view>
 		</Layout>
 		<InstallPrompt v-if="isMobile && !settings.data?.disable_pwa" />
 		<Dialogs />

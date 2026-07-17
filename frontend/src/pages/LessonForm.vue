@@ -188,6 +188,10 @@ const addLessonContent = (data) => {
 			editor.value.render({
 				blocks: blocks,
 			})
+		} else {
+			// Empty lesson — clear the editor. Without this, a reused editor would
+			// keep the previous lesson's blocks (e.g. an uploaded file) on screen.
+			editor.value.render({ blocks: [] })
 		}
 	})
 }
@@ -201,6 +205,9 @@ const addInstructorNotes = (data) => {
 			instructorEditor.value.render({
 				blocks: blocks,
 			})
+		} else {
+			// Empty — clear so a reused editor doesn't keep the previous notes.
+			instructorEditor.value.render({ blocks: [] })
 		}
 	})
 }

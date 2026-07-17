@@ -134,6 +134,9 @@ const routes = [
 		name: 'LessonForm',
 		component: () => import('@/pages/LessonForm.vue'),
 		props: true,
+		// Remount per lesson so the editor never carries the previous lesson's
+		// content (and never autosaves it onto the wrong lesson).
+		meta: { remountOnParamChange: true },
 	},
 	{
 		path: '/batches/:batchName/edit',

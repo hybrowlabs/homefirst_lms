@@ -264,22 +264,6 @@ onMounted(() => {
 	}
 })
 
-// A brand-new submission must start with NO file. The submission is a
-// createDocumentResource keyed on name:'new', so its cached doc can still hold the
-// previous assignment's uploaded file — and the :key remount means the watch below
-// (which only fires on prop change) never runs for it. This guard clears any
-// attachment that appears on a new submission's doc until the user actually uploads
-// here, covering both a value already present at mount and one loaded async from cache.
-watch(
-	() => submissionResource.doc?.assignment_attachment,
-	(val) => {
-		if (props.submissionName === 'new' && !uploadedThisForm.value && val) {
-			submissionResource.doc.assignment_attachment = null
-		}
-	},
-	{ immediate: true }
-)
-
 // Defense-in-depth: if the component is reused across assignmentIDs (e.g. router
 // reuses the same component instance when only params change), reset stale state
 // from the previous assignment so an uploaded file from Week 1 does not leak
@@ -354,6 +338,23 @@ const submissionResource = createDocumentResource({
 	auto: false,
 	cache: [user.data?.name, props.assignmentID],
 })
+
+// A brand-new submission must start with NO file. The submission is a
+// createDocumentResource keyed on name:'new', so its cached doc can still hold the
+// previous assignment's uploaded file — and the :key remount means the prop-change
+// watch never runs for it. This guard clears any attachment that appears on a new
+// submission's doc until the user actually uploads here, covering both a value
+// already present and one loaded async from cache. Declared AFTER submissionResource
+// so its immediate run doesn't hit the const's temporal dead zone.
+watch(
+	() => submissionResource.doc?.assignment_attachment,
+	(val) => {
+		if (props.submissionName === 'new' && !uploadedThisForm.value && val) {
+			submissionResource.doc.assignment_attachment = null
+		}
+	},
+	{ immediate: true }
+)
 
 watch(submissionResource, () => {
 	if (submissionResource.doc) {

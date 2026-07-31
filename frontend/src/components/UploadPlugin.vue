@@ -1,7 +1,6 @@
 <template>
 	<FileUploader
 		:fileTypes="['image/*', 'video/*', 'audio/*', '.pdf']"
-		:uploadArgs="{ method: 'lms.overrides.file_upload.upload_lesson_file' }"
 		:validateFile="validateFile"
 		@success="(data) => addFile(data)"
 		ref="fileUploader"

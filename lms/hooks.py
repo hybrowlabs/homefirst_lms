@@ -100,6 +100,9 @@ after_migrate = [
 
 override_doctype_class = {
 	"Web Template": "lms.overrides.web_template.CustomWebTemplate",
+	# Keep a renamed re-upload's own name instead of silently reusing an
+	# existing same-content file (content-hash de-duplication bypass).
+	"File": "lms.overrides.file.LMSFile",
 }
 
 # Document Events

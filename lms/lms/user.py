@@ -19,12 +19,31 @@ def validate_username_duplicates(doc, method):
 		doc.username = doc.email.replace("@", "").replace(".", "")
 
 
+LMS_ROLES = {"Moderator", "Course Creator", "Batch Evaluator", "LMS Student"}
+
+
+def is_lms_only_user(user=None):
+	"""User with an LMS role who is not an admin: must land on the LMS, never /apps or /desk."""
+	user = user or frappe.session.user
+	if user in ("Administrator", "Guest"):
+		return False
+	roles = set(frappe.get_roles(user))
+	if "System Manager" in roles:
+		return False
+	return bool(LMS_ROLES & roles)
+
+
 def after_insert(doc, method):
 	# After the user sets their password from the welcome/reset link, Frappe's
 	# update_password() sends non-System users to User.redirect_url. Point it to
 	# the LMS so they never land on /desk or /me. Frappe clears it after first use.
-	if doc.user_type != "System User" and not doc.redirect_url:
-		doc.db_set("redirect_url", get_lms_route(), update_modified=False)
+	# default_app makes every later login (password / "Login with Email") open the LMS
+	# directly instead of the /apps launcher.
+	if doc.user_type != "System User":
+		if not doc.redirect_url:
+			doc.db_set("redirect_url", get_lms_route(), update_modified=False)
+		if not doc.default_app:
+			doc.db_set("default_app", "lms", update_modified=False)
 	doc.add_roles("LMS Student")
 
 
@@ -101,13 +120,7 @@ def login_via_key(key: str):
 	"""Email link login: land LMS-only (Website) users on the LMS instead of /apps."""
 	from frappe.www.login import login_via_key as core_login_via_key
 
-	from lms.lms.api import check_app_permission
-
 	core_login_via_key(key)
 
-	if (
-		frappe.local.response.get("type") == "redirect"
-		and frappe.get_cached_value("User", frappe.session.user, "user_type") == "Website User"
-		and check_app_permission()
-	):
+	if frappe.local.response.get("type") == "redirect" and is_lms_only_user():
 		frappe.local.response["location"] = frappe.utils.get_url(get_lms_route())

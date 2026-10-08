@@ -1,5 +1,7 @@
 import frappe
 from frappe import _
+from werkzeug.exceptions import HTTPException
+from werkzeug.utils import redirect
 from frappe.model.naming import append_number_if_name_exists
 from frappe.utils import escape_html, random_string
 from frappe.website.utils import cleanup_page_name, is_signup_disabled
@@ -31,6 +33,36 @@ def is_lms_only_user(user=None):
 	if "System Manager" in roles:
 		return False
 	return bool(LMS_ROLES & roles)
+
+
+STAFF_ROLES = {"Moderator", "Course Creator", "Batch Evaluator", "System Manager"}
+DESK_ROUTES = {"desk", "app", "apps"}
+NON_PAGE_PREFIXES = ("/api/", "/assets/", "/files/", "/private/")
+
+
+def is_student_only_user(user=None):
+	"""LMS Student without any staff/admin role: LMS is the only place they may go."""
+	user = user or frappe.session.user
+	if user in ("Administrator", "Guest"):
+		return False
+	roles = set(frappe.get_roles(user))
+	return "LMS Student" in roles and not (roles & STAFF_ROLES)
+
+
+def block_desk_for_students():
+	"""before_request: students never get /desk, /app or /apps; send them to the LMS and hide
+	the sidebar Apps menu (the LMS frontend shows it only when the system_user cookie is "yes")."""
+	path = frappe.local.request.path
+	if path.startswith(NON_PAGE_PREFIXES) or frappe.session.user in ("Guest", "Administrator"):
+		return
+	if not is_student_only_user():
+		return
+
+	if frappe.request.cookies.get("system_user") == "yes":
+		frappe.local.cookie_manager.set_cookie("system_user", "no", deduplicate=True)
+
+	if path.strip("/").split("/")[0] in DESK_ROUTES:
+		raise HTTPException(response=redirect(frappe.utils.get_url(get_lms_route())))
 
 
 def get_website_user_home_page(user):

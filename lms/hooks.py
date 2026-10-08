@@ -301,6 +301,8 @@ signup_form_template = "lms.plugins.show_custom_signup"
 
 on_login = "lms.lms.user.on_login"
 
+get_website_user_home_page = "lms.lms.user.get_website_user_home_page"
+
 get_site_info = "lms.activation.get_site_info"
 
 add_to_apps_screen = [

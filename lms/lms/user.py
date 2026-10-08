@@ -33,6 +33,12 @@ def is_lms_only_user(user=None):
 	return bool(LMS_ROLES & roles)
 
 
+def get_website_user_home_page(user):
+	"""Home page (site root, post-login redirect) for LMS users: the LMS, not /apps or /desk."""
+	if is_lms_only_user(user):
+		return get_lms_route()
+
+
 def after_insert(doc, method):
 	# After the user sets their password from the welcome/reset link, Frappe's
 	# update_password() sends non-System users to User.redirect_url. Point it to

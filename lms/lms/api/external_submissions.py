@@ -87,7 +87,7 @@ def _result_rows(results, score, score_out_of):
 	]
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def submit_quiz_score(quiz, member, score, results=None):
 	"""File a quiz attempt for `member` with a score worked out elsewhere.
 
@@ -176,7 +176,7 @@ def submit_quiz_score(quiz, member, score, results=None):
 	}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def submit_assignment_result(
 	assignment, member, status=None, comments=None, answer=None, assignment_attachment=None
 ):

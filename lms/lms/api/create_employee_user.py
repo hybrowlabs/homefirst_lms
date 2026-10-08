@@ -6,6 +6,8 @@ import json
 import frappe
 from frappe import _
 
+from lms.lms.utils import get_lms_route
+
 
 @frappe.whitelist()
 def create_users_for_employees(employee_list):
@@ -212,6 +214,9 @@ def _send_welcome_email_safe(email):
 	"""
 	try:
 		user_doc = frappe.get_doc("User", email)
+		if not user_doc.redirect_url:
+			# password set karne ke baad user LMS par jaye, desk par nahi
+			user_doc.db_set("redirect_url", get_lms_route(), update_modified=False)
 		user_doc.send_welcome_mail_to_user()
 		return ""
 	except Exception:

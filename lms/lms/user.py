@@ -20,6 +20,11 @@ def validate_username_duplicates(doc, method):
 
 
 def after_insert(doc, method):
+	# After the user sets their password from the welcome/reset link, Frappe's
+	# update_password() sends non-System users to User.redirect_url. Point it to
+	# the LMS so they never land on /desk or /me. Frappe clears it after first use.
+	if doc.user_type != "System User" and not doc.redirect_url:
+		doc.db_set("redirect_url", get_lms_route(), update_modified=False)
 	doc.add_roles("LMS Student")
 
 

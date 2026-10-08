@@ -94,3 +94,20 @@ def on_login(login_manager):
 	default_app = frappe.db.get_single_value("System Settings", "default_app")
 	if default_app == "lms":
 		frappe.local.response["home_page"] = get_lms_route()
+
+
+@frappe.whitelist(allow_guest=True, methods=["GET"])
+def login_via_key(key: str):
+	"""Email link login: land LMS-only (Website) users on the LMS instead of /apps."""
+	from frappe.www.login import login_via_key as core_login_via_key
+
+	from lms.lms.api import check_app_permission
+
+	core_login_via_key(key)
+
+	if (
+		frappe.local.response.get("type") == "redirect"
+		and frappe.get_cached_value("User", frappe.session.user, "user_type") == "Website User"
+		and check_app_permission()
+	):
+		frappe.local.response["location"] = frappe.utils.get_url(get_lms_route())

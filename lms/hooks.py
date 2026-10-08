@@ -193,6 +193,7 @@ fixtures = [
 #
 override_whitelisted_methods = {
 	# "frappe.desk.search.get_names_for_mentions": "lms.lms.utils.get_names_for_mentions",
+	"frappe.www.login.login_via_key": "lms.lms.user.login_via_key",
 }
 #
 # each overriding function accepts a `data` argument;

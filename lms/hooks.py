@@ -171,6 +171,8 @@ fixtures = [
 					"LMS Assignment Submission-custom_region",
 					"LMS Assignment Submission-custom_reports_to",
 					"LMS Assignment Submission-custom_manager_email_id",
+					# Employee — source field read by autofill_member_context
+					"Employee-custom_manager_email_id",
 				],
 			]
 		],

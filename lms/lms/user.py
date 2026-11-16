@@ -88,6 +88,43 @@ def after_insert(doc, method):
 @frappe.whitelist(allow_guest=True)
 def sign_up(email, full_name, verify_terms, user_category):
 	if is_signup_disabled():
+# Roles ERPNext adds to a user on Employee save (Employee.update_user). Both have desk access,
+# so either one turns a Website User into a System User.
+EMPLOYEE_DESK_ROLES = {"Employee", "Employee Self Service"}
+
+
+def remember_lms_website_user(doc, method=None):
+	"""Employee validate: note that the linked user is a Website User (LMS-only access).
+
+	Employee.on_update -> update_user() adds the "Employee" role to the linked user, which makes it a
+	System User. LMS creates Website Users on purpose, so keep them that way on every Employee save.
+	A Website User cannot hold a desk role, so user_type is the reliable marker; "LMS Student" is not
+	(the User after_insert hook gives it to every user).
+	"""
+	if not doc.user_id:
+		return
+	if frappe.db.get_value("User", doc.user_id, "user_type") == "Website User":
+		frappe.flags.setdefault("lms_website_users", set()).add(doc.user_id)
+
+
+def forget_lms_website_user(doc, method=None):
+	"""Employee on_update (after update_user): the flag only covers this Employee save."""
+	users = frappe.flags.get("lms_website_users")
+	if users:
+		users.discard(doc.user_id)
+
+
+def keep_lms_website_user(doc, method=None):
+	"""User before_validate: drop the desk roles Employee.update_user is adding to an LMS Website User.
+
+	Runs before User.validate computes user_type, so the user never flips to System User
+	(which would also log them out).
+	"""
+	if doc.name not in (frappe.flags.get("lms_website_users") or ()):
+		return
+	doc.roles = [r for r in doc.roles if r.role not in EMPLOYEE_DESK_ROLES]
+
+
 		frappe.throw(_("Sign Up is disabled"), _("Not Allowed"))
 
 	user = frappe.db.get("User", {"email": email})

@@ -121,8 +121,13 @@ doc_events = {
 	},
 	"Notification Log": {"on_change": "lms.lms.utils.publish_notifications"},
 	"User": {
+		"before_validate": "lms.lms.user.keep_lms_website_user",
 		"validate": "lms.lms.user.validate_username_duplicates",
 		"after_insert": "lms.lms.user.after_insert",
+	},
+	"Employee": {
+		"validate": "lms.lms.user.remember_lms_website_user",
+		"on_update": "lms.lms.user.forget_lms_website_user",
 	},
 }
 

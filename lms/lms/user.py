@@ -85,9 +85,6 @@ def after_insert(doc, method):
 	doc.add_roles("LMS Student")
 
 
-@frappe.whitelist(allow_guest=True)
-def sign_up(email, full_name, verify_terms, user_category):
-	if is_signup_disabled():
 # Roles ERPNext adds to a user on Employee save (Employee.update_user). Both have desk access,
 # so either one turns a Website User into a System User.
 EMPLOYEE_DESK_ROLES = {"Employee", "Employee Self Service"}
@@ -125,6 +122,9 @@ def keep_lms_website_user(doc, method=None):
 	doc.roles = [r for r in doc.roles if r.role not in EMPLOYEE_DESK_ROLES]
 
 
+@frappe.whitelist(allow_guest=True)
+def sign_up(email, full_name, verify_terms, user_category):
+	if is_signup_disabled():
 		frappe.throw(_("Sign Up is disabled"), _("Not Allowed"))
 
 	user = frappe.db.get("User", {"email": email})
